@@ -5,8 +5,8 @@
 # This file is part of the GHC build system.
 #
 # To understand how the build system works and how to modify it, see
-#      http://ghc.haskell.org/trac/ghc/wiki/Building/Architecture
-#      http://ghc.haskell.org/trac/ghc/wiki/Building/Modifying
+#      https://gitlab.haskell.org/ghc/ghc/wikis/building/architecture
+#      https://gitlab.haskell.org/ghc/ghc/wikis/building/modifying
 #
 # -----------------------------------------------------------------------------
 
@@ -40,7 +40,7 @@
 #
 # The actual build order is defined by dependencies, and the phase
 # ordering used to ensure correct ordering of makefile-generation; see
-#    http://ghc.haskell.org/trac/ghc/wiki/Building/Architecture/Idiom/PhaseOrdering
+#    https://gitlab.haskell.org/ghc/ghc/wikis/building/architecture/idiom/phase-ordering
 #
 #     * With bootstrapping compiler:
 #           o Build utils/ghc-cabal
@@ -97,7 +97,7 @@ endif
 ifeq      "$(MAKE_RESTARTS)" ""
 else ifeq "$(MAKE_RESTARTS)" "1"
 else
-$(error Make has restarted itself $(MAKE_RESTARTS) times; is there a makefile bug? See http://ghc.haskell.org/trac/ghc/wiki/Building/Troubleshooting#Makehasrestarteditself3timesisthereamakefilebug for details)
+$(error Make has restarted itself $(MAKE_RESTARTS) times; is there a makefile bug? See https://gitlab.haskell.org/ghc/ghc/wikis/building/troubleshooting#make-has-restarted-itself-3-times-is-there-a-makefile-bug for details)
 endif
 
 # -----------------------------------------------------------------------------
@@ -175,7 +175,7 @@ ifeq "$(SPHINXBUILD)" ""
 $(error BUILD_SPHINX_HTML=YES, but `sphinx-build` was not found. \
   Create a file `mk/validate.mk` containing `BUILD_SPHINX_HTML=NO` \
   (when validating), or install `sphinx-build` and rerun `./configure`. \
-  See https://ghc.haskell.org/trac/ghc/wiki/Building/Preparation)
+  See https://gitlab.haskell.org/ghc/ghc/wikis/building/preparation)
 endif
 endif
 
@@ -183,7 +183,7 @@ ifeq "$(BUILD_SPHINX_PDF)" "YES"
 ifeq "$(XELATEX)" ""
 $(error BUILD_SPHINX_PDF=YES, but `xelatex` was not found. \
   Install `xelatex`, then rerun `./configure`. \
-  See https://ghc.haskell.org/trac/ghc/wiki/Building/Preparation)
+  See https://gitlab.haskell.org/ghc/ghc/wikis/building/preparation)
 endif
 endif
 
@@ -191,7 +191,7 @@ ifeq "$(HSCOLOUR_SRCS)" "YES"
 ifeq "$(HSCOLOUR_CMD)" ""
 $(error HSCOLOUR_SRCS=YES, but HSCOLOUR_CMD is empty. \
   Run `cabal install hscolour`, then rerun `./configure`. \
-  See https://ghc.haskell.org/trac/ghc/wiki/Building/Preparation)
+  See https://gitlab.haskell.org/ghc/ghc/wikis/building/preparation)
 endif
 endif
 
@@ -330,17 +330,11 @@ include rules/build-prog.mk
 include rules/shell-wrapper.mk
 
 # -----------------------------------------------------------------------------
-# Build a perl script
-
-include rules/build-perl.mk
-
-# -----------------------------------------------------------------------------
 # Build a package
 
 include rules/build-package.mk
 include rules/build-package-way.mk
 include rules/haddock.mk
-include rules/tags-package.mk
 include rules/foreachLibrary.mk
 
 # -----------------------------------------------------------------------------
@@ -419,8 +413,8 @@ else # CLEANING
 # Packages that are built by stage0. These packages are dependencies of
 # programs such as GHC and ghc-pkg, that we do not assume the stage0
 # compiler already has installed (or up-to-date enough).
-
-PACKAGES_STAGE0 = binary text transformers mtl parsec Cabal/Cabal hpc ghc-boot-th ghc-boot template-haskell ghc-heap ghci
+# Note that these must be given in topological order.
+PACKAGES_STAGE0 = binary transformers mtl hpc ghc-boot-th ghc-boot template-haskell text parsec Cabal/Cabal ghc-heap exceptions ghci
 ifeq "$(Windows_Host)" "NO"
 PACKAGES_STAGE0 += terminfo
 endif
@@ -432,7 +426,7 @@ PACKAGES_STAGE1 += filepath
 PACKAGES_STAGE1 += array
 PACKAGES_STAGE1 += deepseq
 PACKAGES_STAGE1 += bytestring
-PACKAGES_STAGE1 += containers
+PACKAGES_STAGE1 += containers/containers
 
 ifeq "$(Windows_Target)" "YES"
 PACKAGES_STAGE1 += Win32
@@ -447,17 +441,14 @@ PACKAGES_STAGE1 += process
 PACKAGES_STAGE1 += hpc
 PACKAGES_STAGE1 += pretty
 PACKAGES_STAGE1 += binary
-PACKAGES_STAGE1 += text
 PACKAGES_STAGE1 += transformers
 PACKAGES_STAGE1 += mtl
-PACKAGES_STAGE1 += parsec
-# temporary until Cabal switches to parsec mode by default
-libraries/Cabal/Cabal_dist-boot_CONFIGURE_OPTS += --flag parsec
-libraries/Cabal/Cabal_dist-install_CONFIGURE_OPTS += --flag parsec
-PACKAGES_STAGE1 += Cabal/Cabal
 PACKAGES_STAGE1 += ghc-boot-th
 PACKAGES_STAGE1 += ghc-boot
 PACKAGES_STAGE1 += template-haskell
+PACKAGES_STAGE1 += text
+PACKAGES_STAGE1 += parsec
+PACKAGES_STAGE1 += Cabal/Cabal
 PACKAGES_STAGE1 += ghc-compact
 PACKAGES_STAGE1 += ghc-heap
 
@@ -471,7 +462,12 @@ else
 libraries/haskeline_CONFIGURE_OPTS += --flags=-terminfo
 endif
 
+# ghc-cabal doesn't currently support packages containing both libraries
+# and executables. This flag disables the latter.
+libraries/haskeline_CONFIGURE_OPTS += --flags=-examples
+
 PACKAGES_STAGE1 += stm
+PACKAGES_STAGE1 += exceptions
 PACKAGES_STAGE1 += haskeline
 PACKAGES_STAGE1 += ghci
 PACKAGES_STAGE1 += libiserv
@@ -556,7 +552,6 @@ ghc/stage2/package-data.mk: compiler/stage2/package-data.mk
 # the ghc library's package-data.mk is sufficient, as that in turn depends on
 # all the other libraries' package-data.mk files.
 utils/haddock/dist/package-data.mk: compiler/stage2/package-data.mk
-utils/ghctags/dist-install/package-data.mk: compiler/stage2/package-data.mk
 utils/check-api-annotations/dist-install/package-data.mk: compiler/stage2/package-data.mk
 utils/check-ppr/dist-install/package-data.mk: compiler/stage2/package-data.mk
 
@@ -619,6 +614,7 @@ libraries/base_dist-install_CONFIGURE_OPTS += --flags=integer-gmp
 compiler_stage2_CONFIGURE_OPTS += --flags=integer-gmp
 else ifeq "$(INTEGER_LIBRARY)" "integer-simple"
 libraries/base_dist-install_CONFIGURE_OPTS += --flags=integer-simple
+compiler_stage2_CONFIGURE_OPTS += --flags=integer-simple
 else
 $(error Unknown integer library: $(INTEGER_LIBRARY))
 endif
@@ -630,7 +626,6 @@ BUILD_DIRS += utils/mkdirhier
 BUILD_DIRS += utils/touchy
 BUILD_DIRS += utils/unlit
 BUILD_DIRS += utils/hp2ps
-BUILD_DIRS += driver/split
 BUILD_DIRS += utils/genprimopcode
 BUILD_DIRS += driver
 BUILD_DIRS += driver/ghci
@@ -668,7 +663,6 @@ BUILD_DIRS += compiler
 BUILD_DIRS += utils/hsc2hs
 BUILD_DIRS += utils/ghc-pkg
 BUILD_DIRS += utils/testremove
-BUILD_DIRS += utils/ghctags
 BUILD_DIRS += utils/check-api-annotations
 BUILD_DIRS += utils/check-ppr
 BUILD_DIRS += utils/ghc-cabal
@@ -676,7 +670,6 @@ BUILD_DIRS += utils/hpc
 BUILD_DIRS += utils/runghc
 BUILD_DIRS += ghc
 BUILD_DIRS += docs/users_guide
-BUILD_DIRS += utils/count_lines
 BUILD_DIRS += utils/compare_sizes
 BUILD_DIRS += utils/iserv
 
@@ -705,9 +698,6 @@ endif
 ifeq "$(Windows_Host)" "NO"
 BUILD_DIRS := $(filter-out utils/touchy,$(BUILD_DIRS))
 endif
-ifeq "$(GhcUnregisterised)" "YES"
-BUILD_DIRS := $(filter-out driver/split,$(BUILD_DIRS))
-endif
 ifeq "$(GhcWithInterpreter)" "NO"
 # runghc is just GHCi in disguise
 BUILD_DIRS := $(filter-out utils/runghc,$(BUILD_DIRS))
@@ -718,7 +708,6 @@ endif
 ifneq "$(CrossCompiling) $(Stage1Only)" "NO NO"
 # See Note [No stage2 packages when CrossCompiling or Stage1Only].
 # See Note [Stage1Only vs stage=1] in mk/config.mk.in.
-BUILD_DIRS := $(filter-out utils/ghctags,$(BUILD_DIRS))
 BUILD_DIRS := $(filter-out utils/check-api-annotations,$(BUILD_DIRS))
 BUILD_DIRS := $(filter-out utils/check-ppr,$(BUILD_DIRS))
 endif
@@ -784,8 +773,11 @@ ifneq "$(BINDIST)" "YES"
 # Make sure we have all the GHCi libs by the time we've built
 # ghc-stage2.
 #
-GHCI_LIBS = $(foreach lib,$(PACKAGES_STAGE1),$(libraries/$(lib)_dist-install_GHCI_LIB)) \
-	    $(compiler_stage2_GHCI_LIB)
+GHCI_LIBS = \
+    $(foreach way,$(GhcLibWays),\
+        $(foreach lib,$(PACKAGES_STAGE1),\
+            $(libraries/$(lib)_dist-install_$(way)_GHCI_LIB)) \
+        $(compiler_stage2_$(way)_GHCI_LIB))
 
 ifeq "$(UseArchivesForGhci)" "NO"
 ghc/stage2/build/tmp/$(ghc_stage2_PROG) : $(GHCI_LIBS)
@@ -827,11 +819,6 @@ install : install_mingw
 install_mingw : $(INPLACE_MINGW)
 	"$(CP)" -Rp $(INPLACE_MINGW) $(prefix)
 
-install : install_perl
-.PHONY: install_perl
-install_perl : $(INPLACE_PERL)
-	"$(CP)" -Rp $(INPLACE_PERL) $(prefix)
-
 endif # Windows_Host
 
 ifneq "$(BINDIST)" "YES"
@@ -843,12 +830,6 @@ libraries/ghc-prim/dist-install/build/autogen/GHC/Prim.hs: \
                             $(PRIMOPS_TXT_STAGE1) $$(genprimopcode_INPLACE) \
                           | $$(dir $$@)/.
 	"$(genprimopcode_INPLACE)" --make-haskell-source < $< > $@
-
-.PHONY: tags
-tags: tags_compiler
-
-.PHONY: TAGS
-TAGS: TAGS_compiler
 
 # -----------------------------------------------------------------------------
 # Installation
@@ -1034,7 +1015,6 @@ $(eval $(call bindist-list,.,\
     README \
     INSTALL \
     configure config.sub config.guess install-sh \
-    settings.in \
     llvm-targets \
     llvm-passes \
     packages \
@@ -1043,11 +1023,14 @@ $(eval $(call bindist-list,.,\
     $(INPLACE_BIN)/mkdirhier \
     utils/ghc-cabal/dist-install/build/tmp/ghc-cabal \
     $(BINDIST_WRAPPERS) \
-    $(BINDIST_PERL_SOURCES) \
     $(BINDIST_LIBS) \
     $(BINDIST_HI) \
     $(BINDIST_EXTRAS) \
+    includes/Makefile \
     $(includes_H_FILES) \
+    $(includes_1_H_CONFIG) \
+    $(includes_1_H_PLATFORM) \
+    $(includes_1_H_VERSION) \
     $(includes_DERIVEDCONSTANTS) \
     $(includes_GHCCONSTANTS) \
     $(libffi_HEADERS) \
@@ -1063,7 +1046,7 @@ $(eval $(call bindist-list,.,\
     $(wildcard compiler/stage2/doc) \
     $(wildcard libraries/*/dist-install/doc/) \
     $(wildcard libraries/*/*/dist-install/doc/) \
-    $(filter-out settings llvm-targets llvm-passes,$(INSTALL_LIBS)) \
+    $(filter-out llvm-targets llvm-passes $(includes_SETTINGS),$(INSTALL_LIBS)) \
     $(RTS_INSTALL_LIBS) \
     $(filter-out %/project.mk mk/config.mk %/mk/install.mk,$(MAKEFILE_LIST)) \
     mk/project.mk \
@@ -1089,10 +1072,10 @@ BIN_DIST_MK = $(BIN_DIST_PREP_DIR)/bindist.mk
 #
 # See Note [No stage2 packages when CrossCompiling or Stage1Only].
 
-unix-binary-dist-prep:
+unix-binary-dist-prep: $(includes_1_H_CONFIG) $(includes_1_H_PLATFORM) $(includes_1_H_VERSION)
 	$(call removeTrees,bindistprep/)
 	"$(MKDIRHIER)" $(BIN_DIST_PREP_DIR)
-	set -e; for i in packages LICENSE compiler ghc rts libraries utils docs libffi includes driver mk rules Makefile aclocal.m4 config.sub config.guess install-sh settings.in llvm-targets llvm-passes ghc.mk inplace distrib/configure.ac distrib/README distrib/INSTALL; do ln -s ../../$$i $(BIN_DIST_PREP_DIR)/; done
+	set -e; for i in packages LICENSE compiler ghc rts libraries utils docs libffi includes driver mk rules Makefile aclocal.m4 config.sub config.guess install-sh llvm-targets llvm-passes ghc.mk inplace distrib/configure.ac distrib/README distrib/INSTALL; do ln -s ../../$$i $(BIN_DIST_PREP_DIR)/; done
 	echo "HADDOCK_DOCS       = $(HADDOCK_DOCS)"       >> $(BIN_DIST_MK)
 	echo "BUILD_SPHINX_HTML  = $(BUILD_SPHINX_HTML)"  >> $(BIN_DIST_MK)
 	echo "BUILD_SPHINX_PDF   = $(BUILD_SPHINX_PDF)"   >> $(BIN_DIST_MK)
@@ -1190,7 +1173,7 @@ SRC_DIST_GHC_DIRS = mk rules docs distrib bindisttest libffi includes \
 SRC_DIST_GHC_FILES += \
     configure.ac config.guess config.sub configure \
     aclocal.m4 README.md ANNOUNCE HACKING.md INSTALL.md LICENSE Makefile \
-    install-sh settings.in llvm-targets llvm-passes VERSION GIT_COMMIT_ID \
+    install-sh llvm-targets llvm-passes VERSION GIT_COMMIT_ID \
     boot packages ghc.mk MAKEHELP.md
 
 .PHONY: VERSION
@@ -1215,9 +1198,6 @@ GIT_COMMIT_ID:
 
 sdist-ghc-prep-tree : VERSION GIT_COMMIT_ID
 
-# Extra packages which shouldn't be in the source distribution: see #8801
-EXTRA_PACKAGES=parallel
-
 .PHONY: sdist-ghc-prep-tree
 sdist-ghc-prep-tree :
 	$(call removeTrees,$(SRC_DIST_GHC_ROOT))
@@ -1232,15 +1212,15 @@ sdist-ghc-prep-tree :
 	$(call removeTrees,$(SRC_DIST_GHC_DIR)/libraries/stamp/)
 	$(call removeTrees,$(SRC_DIST_GHC_DIR)/compiler/stage[123])
 	$(call removeFiles,$(SRC_DIST_GHC_DIR)/mk/build.mk)
-	for i in $(EXTRA_PACKAGES); do $(RM) $(RM_OPTS_REC) $(SRC_DIST_GHC_DIR)/libraries/$$i/; done
+	$(call removeFiles,$(SRC_DIST_GHC_DIR)/rts/rts.cabal)
 	cd $(SRC_DIST_GHC_DIR) && "$(FIND)" $(SRC_DIST_GHC_DIRS) \( -name .git -o -name "autom4te*" -o -name "*~" -o -name "\#*" -o -name ".\#*" -o -name "log" -o -name "*-SAVE" -o -name "*.orig" -o -name "*.rej" \) -print | "$(XARGS)" $(XARGS_OPTS) "$(RM)" $(RM_OPTS_REC)
 
 # Add files generated by alex and happy.
 # These rules depend on sdist-ghc-prep-tree.
-$(eval $(call sdist-ghc-file,compiler,stage2,cmm,CmmLex,x))
-$(eval $(call sdist-ghc-file,compiler,stage2,cmm,CmmParse,y))
-$(eval $(call sdist-ghc-file,compiler,stage2,parser,Lexer,x))
-$(eval $(call sdist-ghc-file,compiler,stage2,parser,Parser,y))
+$(eval $(call sdist-ghc-file,compiler,stage2,.,GHC/Cmm/Lexer,x))
+$(eval $(call sdist-ghc-file,compiler,stage2,.,GHC/Cmm/Parser,y))
+$(eval $(call sdist-ghc-file,compiler,stage2,.,GHC/Parser/Lexer,x))
+$(eval $(call sdist-ghc-file,compiler,stage2,.,GHC/Parser,y))
 $(eval $(call sdist-ghc-file,utils/hpc,dist-install,,HpcParser,y))
 $(eval $(call sdist-ghc-file,utils/genprimopcode,dist,,Lexer,x))
 $(eval $(call sdist-ghc-file,utils/genprimopcode,dist,,Parser,y))
@@ -1265,7 +1245,7 @@ sdist-windows-tarballs-prep :
 	mkdir -p $(SRC_DIST_WINDOWS_TARBALLS_ROOT)
 	mkdir -p $(SRC_DIST_WINDOWS_TARBALLS_DIR)
 	mkdir -p $(SRC_DIST_WINDOWS_TARBALLS_DIR)/ghc-tarballs
-	cd $(SRC_DIST_WINDOWS_TARBALLS_DIR)/ghc-tarballs && lndir $(TOP)/ghc-tarballs
+	cd $(SRC_DIST_WINDOWS_TARBALLS_DIR)/ghc-tarballs && ln -s $(TOP)/ghc-tarballs/i686 . && ln -s $(TOP)/ghc-tarballs/x86_64
 	$(call removeTrees,$(SRC_DIST_WINDOWS_TARBALLS_DIR)/ghc-tarballs/.git)
 
 .PHONY: sdist-testsuite-prep
@@ -1331,11 +1311,12 @@ CLEAN_FILES += compiler/ghc.cabal.old
 # as they may still be in old GHC trees:
 CLEAN_FILES += includes/GHCConstants.h
 CLEAN_FILES += includes/DerivedConstants.h
-CLEAN_FILES += includes/ghcautoconf.h
-CLEAN_FILES += includes/ghcplatform.h
-CLEAN_FILES += includes/ghcversion.h
+$(foreach n,0 1 2, \
+    $(foreach h,$(includes_$n_H_CONFIG) $(includes_$n_H_PLATFORM) $(includes_$n_H_VERSION), \
+        $(eval CLEAN_FILES += $h)))
+CLEAN_FILES += $(includes_SETTINGS)
 CLEAN_FILES += utils/ghc-pkg/Version.hs
-CLEAN_FILES += compiler/prelude/primops.txt
+CLEAN_FILES += compiler/GHC/Builtin/primops.txt
 CLEAN_FILES += $(wildcard compiler/primop*incl)
 
 clean : clean_files clean_libraries
@@ -1435,7 +1416,6 @@ distclean : clean
 # Also clean Windows-only inplace directories.
 # Don't delete 'inplace' itself, it contains source files.
 	$(call removeTrees,inplace/mingw)
-	$(call removeTrees,inplace/perl)
 
 # Remove the fs utilities.
 	$(call removeFiles,utils/lndir/fs.h)
@@ -1447,12 +1427,16 @@ distclean : clean
 	$(call removeFiles,libraries/base/include/fs.h)
 	$(call removeFiles,libraries/base/cbits/fs.c)
 
+CLEAN_LIBRARY_GHC_MK_FILES += $(patsubst %, libraries/%/ghc.mk, $(PACKAGES_STAGE1) $(PACKAGES_STAGE2))
+# Don't clean `libraries/ghc-boot/ghc.mk`, since it's intended to be version-controlled (#16953)
+CLEAN_LIBRARY_GHC_MK_FILES := $(filter-out libraries/ghc-boot/ghc.mk,$(CLEAN_LIBRARY_GHC_MK_FILES))
+
 maintainer-clean : distclean
 	$(call removeFiles,configure mk/config.h.in)
 	$(call removeTrees,autom4te.cache $(wildcard libraries/*/autom4te.cache))
 	$(call removeFiles,$(patsubst %, libraries/%/GNUmakefile, \
 	        $(PACKAGES_STAGE1) $(PACKAGES_STAGE2)))
-	$(call removeFiles,$(patsubst %, libraries/%/ghc.mk, $(PACKAGES_STAGE1) $(PACKAGES_STAGE2)))
+	$(call removeFiles,$(CLEAN_LIBRARY_GHC_MK_FILES))
 	$(call removeFiles,$(patsubst %, libraries/%/configure, \
 	        $(PACKAGES_STAGE1) $(PACKAGES_STAGE2)))
 	$(call removeFiles,libraries/base/include/HsBaseConfig.h.in)
@@ -1464,8 +1448,7 @@ maintainer-clean : distclean
 .PHONY: all_libraries
 
 .PHONY: bootstrapping-files
-# See https://ghc.haskell.org/trac/ghc/wiki/Building/Porting
-bootstrapping-files: $(includes_H_CONFIG)
+# See https://gitlab.haskell.org/ghc/ghc/wikis/building/porting
 bootstrapping-files: $(includes_DERIVEDCONSTANTS)
 bootstrapping-files: $(includes_GHCCONSTANTS)
 bootstrapping-files: $(libffi_HEADERS)
@@ -1511,8 +1494,8 @@ endif
 #  - neither do we register the ghc library (compiler/stage1) that we build
 #    with stage0. TODO Why not? We do build it...
 #  - as a result, we need to a) use ghc-stage2 to build packages that depend on
-#    the ghc library (e.g. ghctags [4]) and b) exclude those packages when
-#    ghc-stage2 is not available.
+#    the ghc library and b) exclude those packages when ghc-stage2 is not
+#    available.
 #  - when Stage1Only=YES, it's clear that ghc-stage2 is not available (we just
 #    said we didn't want it), so we have to exclude the stage2 packages from
 #    the build. This includes the case where Stage1Only=YES is combined with
@@ -1520,7 +1503,7 @@ endif
 #  - when CrossCompiling=YES, but Stage1Only=NO (Cross-compiling GHC itself
 #    [3]), we can not use ghc-stage2 either. The reason is that stage2 doesn't
 #    run on the host platform at all; it is built to run on $(TARGETPLATFORM)"
-#    [5]. Therefore in this case we also have to exclude the stage2 packages
+#    [4]. Therefore in this case we also have to exclude the stage2 packages
 #    from the build.
 #
 # Because we omit certain packages from the build when CrossCompiling=YES,
@@ -1533,12 +1516,9 @@ endif
 #  [2]
 #  find utils -name package-data.mk | xargs grep -l 'DEP_NAMES =.* ghc\($\| \)'
 #
-#  [3] https://ghc.haskell.org/trac/ghc/wiki/Building/CrossCompiling
+#  [3] https://gitlab.haskell.org/ghc/ghc/wikis/building/cross-compiling
 #
-#  [4] 5fb72555f7b7ab67a33583f33ad9160761ca434f
-#      "ghctags needs the stage2 compiler, since it uses the GHC API."
-#
-#  [5] * bc31dbe8ee22819054df60f5ef219fed393a1c54
+#  [4] * bc31dbe8ee22819054df60f5ef219fed393a1c54
 #      "Disable any packages built with stage 2 when cross-compiling
 #       Since we can't run stage 2 on the host."
 #

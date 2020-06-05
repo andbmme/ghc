@@ -1,5 +1,6 @@
 # Test +RTS -G1 here (it isn't tested anywhere else)
-setTestOpts(unless(fast(), extra_ways(['g1'])))
+# N.B. Nonmoving collector doesn't support -G1
+setTestOpts(unless(fast(), [ extra_ways(['g1']), omit_ways(['nonmoving', 'nonmoving_thr', 'nonmoving_thr_ghc'])]))
 
 test('cgrun001', normal, compile_and_run, [''])
 test('cgrun002', normal, compile_and_run, [''])
@@ -58,6 +59,7 @@ test('cgrun054', normal, compile_and_run, [''])
 test('cgrun055', normal, compile_and_run, [''])
 test('cgrun056', normal, compile_and_run, [''])
 test('cgrun057', [ only_ways(prof_ways),
+                   fragile(17554),
                    extra_run_opts('+RTS -xc') ], compile_and_run, [''])
 test('cgrun058', normal, compile_and_run, [''])
 test('cgrun059', exit_code(1), compile_and_run, [''])
@@ -72,13 +74,22 @@ test('cgrun065', normal, compile_and_run, [''])
 test('cgrun066', normal, compile_and_run, [''])
 test('cgrun067', [extra_files(['Cgrun067A.hs'])], compile_and_run, [''])
 test('cgrun068', reqlib('random'), compile_and_run, [''])
-test('cgrun069', omit_ways(['ghci']), multi_compile_and_run,
-                 ['cgrun069', [('cgrun069_cmm.cmm', '')], ''])
+test('cgrun069',
+     [when(unregisterised(), expect_broken(15467)),
+      omit_ways(['ghci'])],
+     multi_compile_and_run,
+     ['cgrun069', [('cgrun069_cmm.cmm', '')], ''])
 test('cgrun070', normal, compile_and_run, [''])
-test('cgrun071', normal, compile_and_run, [''])
+test('cgrun071',
+     [when(have_cpu_feature('sse4_2'), extra_hc_opts('-msse4.2')),
+      when(arch('i386'), expect_broken_for(17247, ['optasm', 'profthreaded', 'profasm', 'dyn', 'threaded2']))],
+     compile_and_run, [''])
 test('cgrun072', normal, compile_and_run, [''])
 test('cgrun075', normal, compile_and_run, [''])
 test('cgrun076', normal, compile_and_run, [''])
+test('cgrun077', [when(have_cpu_feature('bmi2'), extra_hc_opts('-mbmi2'))], compile_and_run, [''])
+test('cgrun078', omit_ways(['ghci']), compile_and_run, [''])
+test('cgrun079', normal, compile_and_run, [''])
 
 test('T1852', normal, compile_and_run, [''])
 test('T1861', extra_run_opts('0'), compile_and_run, [''])
@@ -133,6 +144,7 @@ test('StaticByteArraySize', normal, compile_and_run, ['-O2'])
 test('CopySmallArray', normal, compile_and_run, [''])
 test('CopySmallArrayStressTest', reqlib('random'), compile_and_run, [''])
 test('SizeOfSmallArray', normal, compile_and_run, [''])
+test('NewSmallArray', normal, compile_and_run, [''])
 test('T9001', normal, compile_and_run, [''])
 test('T9013', omit_ways(['ghci']),  # ghci doesn't support unboxed tuples
      compile_and_run, [''])
@@ -161,6 +173,7 @@ test('T12855', normal, compile_and_run, [''])
 test('T9577', [ unless(arch('x86_64') or arch('i386'),skip),
                 when(opsys('darwin'), expect_broken(12937)),
                 when(opsys('mingw32'), expect_broken(12965)),
+                when(unregisterised(), skip),
                 only_ways(['normal']) ], compile_and_run, [''])
 
 test('T13425', normal, compile_and_run, ['-O'])
@@ -173,3 +186,22 @@ test('T14619', normal, compile_and_run, [''])
 test('T14754', normal, compile_and_run, [''])
 test('T14346', only_ways(['threaded1','threaded2']), compile_and_run, ['-O -threaded'])
 test('T14251', normal, compile_and_run, [''])
+
+# These actually used to fail with all optimisation settings, but adding -O just
+# to make sure
+test('T15696_1', normal, compile_and_run, ['-O'])
+test('T15696_2', normal, compile_and_run, ['-O'])
+# This requires -O
+test('T15696_3', normal, compile_and_run, ['-O'])
+
+test('T15892',
+     [ ignore_stdout,
+       # -G1 is unsupported by the nonmoving GC
+       omit_ways(['nonmoving', 'nonmoving_thr', 'nonmoving_thr_ghc']),
+       # we want to do lots of major GC to make the bug more likely to
+       # happen, so -G1 -A32k:
+       extra_run_opts('+RTS -G1 -A32k -RTS') ],
+     compile_and_run, ['-O'])
+test('T16617', normal, compile_and_run, [''])
+test('T16449_2', exit_code(0), compile_and_run, [''])
+test('T16846', [only_ways(['optasm']), exit_code(1)], compile_and_run, [''])

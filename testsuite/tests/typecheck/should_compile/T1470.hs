@@ -1,12 +1,14 @@
 {-# OPTIONS_GHC -fno-warn-redundant-constraints #-}
 {-# LANGUAGE MultiParamTypeClasses, FlexibleContexts, FlexibleInstances, UndecidableInstances, KindSignatures #-}
 
--- Trac #1470
+-- #1470
 
 module Foo where
 
+import Data.Kind (Type)
+
 class Sat a
-class Data (ctx :: * -> *) a
+class Data (ctx :: Type -> Type) a
 instance  Sat (ctx Char)             => Data ctx Char
 instance (Sat (ctx [a]), Data ctx a) => Data ctx [a]
 

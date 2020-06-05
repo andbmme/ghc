@@ -1,5 +1,7 @@
 {-# LANGUAGE Trustworthy #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 -----------------------------------------------------------------------------
 -- |
@@ -12,11 +14,12 @@
 -- Portability :  portable
 --
 -- This module defines a \"Fixed\" type for fixed-precision arithmetic.
--- The parameter to Fixed is any type that's an instance of HasResolution.
--- HasResolution has a single method that gives the resolution of the Fixed type.
+-- The parameter to 'Fixed' is any type that's an instance of 'HasResolution'.
+-- 'HasResolution' has a single method that gives the resolution of the 'Fixed'
+-- type.
 --
--- This module also contains generalisations of div, mod, and divmod to work
--- with any Real instance.
+-- This module also contains generalisations of 'div', 'mod', and 'divMod' to
+-- work with any 'Real' instance.
 --
 -----------------------------------------------------------------------------
 
@@ -36,28 +39,29 @@ module Data.Fixed
 ) where
 
 import Data.Data
+import GHC.TypeLits (KnownNat, natVal)
 import GHC.Read
 import Text.ParserCombinators.ReadPrec
 import Text.Read.Lex
 
 default () -- avoid any defaulting shenanigans
 
--- | generalisation of 'div' to any instance of Real
+-- | Generalisation of 'div' to any instance of 'Real'
 div' :: (Real a,Integral b) => a -> a -> b
 div' n d = floor ((toRational n) / (toRational d))
 
--- | generalisation of 'divMod' to any instance of Real
+-- | Generalisation of 'divMod' to any instance of 'Real'
 divMod' :: (Real a,Integral b) => a -> a -> (b,a)
 divMod' n d = (f,n - (fromIntegral f) * d) where
     f = div' n d
 
--- | generalisation of 'mod' to any instance of Real
+-- | Generalisation of 'mod' to any instance of 'Real'
 mod' :: (Real a) => a -> a -> a
 mod' n d = n - (fromInteger f) * d where
     f = div' n d
 
 -- | The type parameter should be an instance of 'HasResolution'.
-newtype Fixed a = MkFixed Integer
+newtype Fixed (a :: k) = MkFixed Integer
         deriving ( Eq  -- ^ @since 2.01
                  , Ord -- ^ @since 2.01
                  )
@@ -70,17 +74,21 @@ conMkFixed :: Constr
 conMkFixed = mkConstr tyFixed "MkFixed" [] Prefix
 
 -- | @since 4.1.0.0
-instance (Typeable a) => Data (Fixed a) where
+instance (Typeable k,Typeable a) => Data (Fixed (a :: k)) where
     gfoldl k z (MkFixed a) = k (z MkFixed) a
     gunfold k z _ = k (z MkFixed)
     dataTypeOf _ = tyFixed
     toConstr _ = conMkFixed
 
-class HasResolution a where
+class HasResolution (a :: k) where
     resolution :: p a -> Integer
 
-withType :: (p a -> f a) -> f a
-withType foo = foo undefined
+-- | For example, @Fixed 1000@ will give you a 'Fixed' with a resolution of 1000.
+instance KnownNat n => HasResolution n where
+    resolution _ = natVal (Proxy :: Proxy n)
+
+withType :: (Proxy a -> f a) -> f a
+withType foo = foo Proxy
 
 withResolution :: (HasResolution a) => (Integer -> f a) -> f a
 withResolution foo = withType (foo . resolution)
@@ -157,7 +165,7 @@ showFixed chopTrailingZeros fa@(MkFixed a) = (show i) ++ (withDot (showIntegerZe
 
 -- | @since 2.01
 instance (HasResolution a) => Show (Fixed a) where
-    show = showFixed False
+    showsPrec p n = showParen (p > 6 && n < 0) $ showString $ showFixed False n
 
 -- | @since 4.3.0.0
 instance (HasResolution a) => Read (Fixed a) where
@@ -169,7 +177,7 @@ convertFixed :: forall a . HasResolution a => Lexeme -> ReadPrec (Fixed a)
 convertFixed (Number n)
  | Just (i, f) <- numberToFixed e n =
     return (fromInteger i + (fromInteger f / (10 ^ e)))
-    where r = resolution (undefined :: Fixed a)
+    where r = resolution (Proxy :: Proxy a)
           -- round 'e' up to help make the 'read . show == id' property
           -- possible also for cases where 'resolution' is not a
           -- power-of-10, such as e.g. when 'resolution = 128'

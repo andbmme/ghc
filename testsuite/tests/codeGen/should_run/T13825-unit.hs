@@ -1,14 +1,14 @@
 module Main where
 
-import DynFlags
-import RepType
-import SMRep
-import StgCmmLayout
-import StgCmmClosure
+import GHC.Driver.Session
+import GHC.Types.RepType
+import GHC.Runtime.Heap.Layout
+import GHC.StgToCmm.Layout
+import GHC.StgToCmm.Closure
 import GHC
-import GhcMonad
+import GHC.Driver.Monad
 import System.Environment
-import Platform
+import GHC.Platform
 
 main :: IO ()
 main = do

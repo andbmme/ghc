@@ -1,9 +1,10 @@
 setTestOpts([extra_run_opts('-ignore-dot-ghci'),
-             extra_ways(['ghci-ext']), # test with -fexternal-interpreter
+             when(config.have_ext_interp, extra_ways(['ghci-ext'])), # test with -fexternal-interpreter
              normalise_slashes])
 
+
 test('print001', normal, ghci_script, ['print001.script'])
-test('print002', extra_files(['../Test.hs']), ghci_script, ['print002.script'])
+test('print002', [extra_files(['../Test.hs']), when(arch('arm'), fragile(17557))], ghci_script, ['print002.script'])
 test('print003', extra_files(['../Test.hs']), ghci_script, ['print003.script'])
 test('print004', normal, ghci_script, ['print004.script'])
 test('print005', extra_files(['../QSort.hs']), ghci_script, ['print005.script'])
@@ -44,13 +45,21 @@ test('print033', normal, ghci_script, ['print033.script'])
 test('print034', extra_files(['../GADT.hs', '../Test.hs']), ghci_script, ['print034.script'])
 test('print035', extra_files(['../Unboxed.hs']), ghci_script, ['print035.script'])
 test('print036', expect_broken(9046), ghci_script, ['print036.script'])
+test('print037', when(llvm_build() and integer_gmp(),
+                      fragile_for(16205, ['ghci-ext']))
+               , ghci_script
+               , ['print037.script'])
 
 test('break001', extra_files(['../Test2.hs']), ghci_script, ['break001.script'])
 test('break002', extra_files(['../Test2.hs']), ghci_script, ['break002.script'])
 test('break003', extra_files(['../Test3.hs']), ghci_script, ['break003.script'])
 test('break005', extra_files(['../QSort.hs']), ghci_script, ['break005.script'])
-test('break006', extra_files(['../Test3.hs']), ghci_script, ['break006.script'])
-test('break007', [extra_files(['Break007.hs'])], ghci_script, ['break007.script'])
+test('break006',
+     [ when(compiler_debugged(), expect_broken(17833)),
+       extra_files(['../Test3.hs'])],
+     ghci_script,
+     ['break006.script'])
+test('break007', extra_files(['Break007.hs']), ghci_script, ['break007.script'])
 test('break008', extra_files(['../Test3.hs']), ghci_script, ['break008.script'])
 test('break009', [extra_files(['../Test6.hs']),
                   combined_output], ghci_script, ['break009.script'])
@@ -66,7 +75,8 @@ test('break015', expect_broken(1532), ghci_script, ['break015.script'])
 test('break016', combined_output, ghci_script, ['break016.script'])
 test('break017', [extra_files(['../QSort.hs']),
                   combined_output], ghci_script, ['break017.script'])
-test('break018', extra_files(['../mdo.hs']), ghci_script, ['break018.script'])
+test('break018', [expect_broken(18004), extra_files(['../mdo.hs'])],
+     ghci_script, ['break018.script'])
 test('break019', extra_files(['../Test2.hs']), ghci_script, ['break019.script'])
 test('break020', extra_files(['Break020b.hs']), ghci_script, ['break020.script'])
 test('break021', extra_files(['Break020b.hs', 'break020.hs']), ghci_script, ['break021.script'])
@@ -74,8 +84,6 @@ test('break024', combined_output, ghci_script, ['break024.script'])
 test('break025', normal, ghci_script, ['break025.script'])
 test('break026', normal, ghci_script, ['break026.script'])
 test('break027', extra_files(['../QSort.hs']), ghci_script, ['break027.script'])
-test('break028', normal, ghci_script, ['break028.script'])
-
 test('dynbrk001', extra_files(['../QSort.hs']), ghci_script, ['dynbrk001.script'])
 test('dynbrk002', extra_files(['../QSort.hs']), ghci_script, ['dynbrk002.script'])
 test('dynbrk003', normal, ghci_script, ['dynbrk003.script'])
@@ -97,13 +105,24 @@ test('hist001', [extra_files(['../Test3.hs']), extra_run_opts('+RTS -I0')],
 test('hist002', [extra_files(['../Test3.hs']), extra_run_opts('+RTS -I0')],
      ghci_script, ['hist002.script'])
 
+test('T1620', extra_files(['T1620/', 'T1620/T1620.hs']),
+              ghci_script, ['T1620.script'])
 test('T2740', normal, ghci_script, ['T2740.script'])
+test('T2950', normal, ghci_script, ['T2950.script'])
 
 test('getargs', extra_files(['../getargs.hs']), ghci_script, ['getargs.script'])
 test('T7386', normal, ghci_script, ['T7386.script'])
+test('T8487', normal, ghci_script, ['T8487.script'])
 test('T8557', normal, ghci_script, ['T8557.script'])
 test('T12458', normal, ghci_script, ['T12458.script'])
-test('T13825-debugger', when(arch('powerpc64'), expect_broken(14455)),
+test('T13825-debugger',
+      [when(arch('powerpc64'), expect_broken(14455)),
+       when(arch('arm'), fragile_for(17557, ['ghci-ext']))],
       ghci_script, ['T13825-debugger.script'])
+test('T14628', normal, ghci_script, ['T14628.script'])
+test('T14690', normal, ghci_script, ['T14690.script'])
+test('T16700', normal, ghci_script, ['T16700.script'])
 
 test('break029', extra_files(['break029.hs']), ghci_script, ['break029.script'])
+test('T2215', normal, ghci_script, ['T2215.script'])
+test('T17989', normal, ghci_script, ['T17989.script'])

@@ -25,36 +25,37 @@
 #include <fs_rts.h>
 #include <string.h>
 
-#if defined(DEBUG)
+#if defined(DEBUG) || defined(PROFILING)
 #include "Trace.h"
 #endif
 
 /*
  * Profiling allocation arena.
  */
+#if defined(DEBUG)
+Arena *prof_arena;
+#else
 static Arena *prof_arena;
+#endif
 
 /*
  * Global variables used to assign unique IDs to cc's, ccs's, and
  * closure_cats
  */
 
-unsigned int CC_ID  = 1;
-unsigned int CCS_ID = 1;
+static unsigned int CC_ID  = 1;
+static unsigned int CCS_ID = 1;
 
 /* Globals for opening the profiling log file(s)
  */
 static char *prof_filename; /* prof report file name = <program>.prof */
 FILE *prof_file;
 
-static char *hp_filename;       /* heap profile (hp2ps style) log file */
-FILE *hp_file;
-
-/* Linked lists to keep track of CCs and CCSs that haven't
- * been declared in the log file yet
- */
+// List of all cost centres. Used for reporting.
 CostCentre      *CC_LIST  = NULL;
-CostCentreStack *CCS_LIST = NULL;
+// All cost centre stacks temporarily appear here, to be able to make CCS_MAIN a
+// parent of all cost centres stacks (done in initProfiling2()).
+static CostCentreStack *CCS_LIST = NULL;
 
 #if defined(THREADED_RTS)
 static Mutex ccs_mutex;
@@ -118,9 +119,11 @@ static  CostCentreStack * pruneCCSTree    ( CostCentreStack *ccs );
 static  CostCentreStack * actualPush      ( CostCentreStack *, CostCentre * );
 static  CostCentreStack * isInIndexTable  ( IndexTable *, CostCentre * );
 static  IndexTable *      addToIndexTable ( IndexTable *, CostCentreStack *,
-                                            CostCentre *, unsigned int );
+                                            CostCentre *, bool );
 static  void              ccsSetSelected  ( CostCentreStack *ccs );
 static  void              aggregateCCCosts( CostCentreStack *ccs );
+static  void              registerCC      ( CostCentre *cc );
+static  void              registerCCS     ( CostCentreStack *ccs );
 
 static  void              initTimeProfiling    ( void );
 static  void              initProfilingLogFile ( void );
@@ -128,6 +131,19 @@ static  void              initProfilingLogFile ( void );
 /* -----------------------------------------------------------------------------
    Initialise the profiling environment
    -------------------------------------------------------------------------- */
+
+static void
+dumpCostCentresToEventLog(void)
+{
+#if defined(PROFILING)
+    CostCentre *cc, *next;
+    for (cc = CC_LIST; cc != NULL; cc = next) {
+        next = cc->link;
+        traceHeapProfCostCentre(cc->ccID, cc->label, cc->module,
+                                cc->srcloc, cc->is_caf);
+    }
+#endif
+}
 
 void initProfiling (void)
 {
@@ -154,21 +170,21 @@ void initProfiling (void)
     /* Register all the cost centres / stacks in the program
      * CC_MAIN gets link = 0, all others have non-zero link.
      */
-    REGISTER_CC(CC_MAIN);
-    REGISTER_CC(CC_SYSTEM);
-    REGISTER_CC(CC_GC);
-    REGISTER_CC(CC_OVERHEAD);
-    REGISTER_CC(CC_DONT_CARE);
-    REGISTER_CC(CC_PINNED);
-    REGISTER_CC(CC_IDLE);
+    registerCC(CC_MAIN);
+    registerCC(CC_SYSTEM);
+    registerCC(CC_GC);
+    registerCC(CC_OVERHEAD);
+    registerCC(CC_DONT_CARE);
+    registerCC(CC_PINNED);
+    registerCC(CC_IDLE);
 
-    REGISTER_CCS(CCS_SYSTEM);
-    REGISTER_CCS(CCS_GC);
-    REGISTER_CCS(CCS_OVERHEAD);
-    REGISTER_CCS(CCS_DONT_CARE);
-    REGISTER_CCS(CCS_PINNED);
-    REGISTER_CCS(CCS_IDLE);
-    REGISTER_CCS(CCS_MAIN);
+    registerCCS(CCS_SYSTEM);
+    registerCCS(CCS_GC);
+    registerCCS(CCS_OVERHEAD);
+    registerCCS(CCS_DONT_CARE);
+    registerCCS(CCS_PINNED);
+    registerCCS(CCS_IDLE);
+    registerCCS(CCS_MAIN);
 
     /* find all the registered cost centre stacks, and make them
      * children of CCS_MAIN.
@@ -179,26 +195,25 @@ void initProfiling (void)
     CCS_MAIN->root = CCS_MAIN;
     ccsSetSelected(CCS_MAIN);
 
-    initProfiling2();
+    refreshProfilingCCSs();
 
     if (RtsFlags.CcFlags.doCostCentres) {
         initTimeProfiling();
     }
 
-    if (RtsFlags.ProfFlags.doHeapProfile) {
-        initHeapProfiling();
-    }
+    dumpCostCentresToEventLog();
 }
+
+
 
 //
 // Should be called after loading any new Haskell code.
 //
-void initProfiling2 (void)
+void refreshProfilingCCSs (void)
 {
-    CostCentreStack *ccs, *next;
-
     // make CCS_MAIN the parent of all the pre-defined CCSs.
-    for (ccs = CCS_LIST; ccs != NULL; ) {
+    CostCentreStack *next;
+    for (CostCentreStack *ccs = CCS_LIST; ccs != NULL; ) {
         next = ccs->prevStack;
         ccs->prevStack = NULL;
         actualPush_(CCS_MAIN,ccs->cc,ccs);
@@ -265,7 +280,7 @@ initProfilingLogFile(void)
         sprintf(prof_filename, "%s.prof", stem);
 
         /* open the log file */
-        if ((prof_file = __rts_fopen(prof_filename, "w")) == NULL) {
+        if ((prof_file = __rts_fopen(prof_filename, "w+")) == NULL) {
             debugBelch("Can't open profiling report file %s\n", prof_filename);
             RtsFlags.CcFlags.doCostCentres = 0;
             // Retainer profiling (`-hr` or `-hr<cc> -h<x>`) writes to
@@ -275,24 +290,12 @@ initProfilingLogFile(void)
             }
         }
     }
-
-    if (RtsFlags.ProfFlags.doHeapProfile) {
-        /* Initialise the log file name */
-        hp_filename = arenaAlloc(prof_arena, strlen(stem) + 6);
-        sprintf(hp_filename, "%s.hp", stem);
-
-        /* open the log file */
-        if ((hp_file = __rts_fopen(hp_filename, "w")) == NULL) {
-            debugBelch("Can't open profiling report file %s\n",
-                       hp_filename);
-            RtsFlags.ProfFlags.doHeapProfile = 0;
-        }
-    }
 }
 
 void
 initTimeProfiling(void)
 {
+    traceProfBegin();
     /* Start ticking */
     startProfTimer();
 };
@@ -303,27 +306,49 @@ endProfiling ( void )
     if (RtsFlags.CcFlags.doCostCentres) {
         stopProfTimer();
     }
-    if (RtsFlags.ProfFlags.doHeapProfile) {
-        endHeapProfiling();
+}
+
+/* -----------------------------------------------------------------------------
+   Registering CCs and CCSs
+
+   Registering a CC or CCS consists of
+     - assigning it a unique ID
+     - linking it onto the list of registered CCs/CCSs
+
+   Cost centres are registered at startup by a C constructor function
+   generated by the compiler (ProfInit.hs) in the _stub.c file for each module.
+ -------------------------------------------------------------------------- */
+
+static void
+registerCC(CostCentre *cc)
+{
+    if (cc->link == NULL) {
+        cc->link = CC_LIST;
+        CC_LIST = cc;
+        cc->ccID = CC_ID++;
     }
 }
 
+static void registerCCS(CostCentreStack *ccs)
+{
+    if (ccs->prevStack == NULL) {
+        ccs->prevStack = CCS_LIST;
+        CCS_LIST = ccs;
+        ccs->ccsID = CCS_ID++;
+    }
+}
 
-/*
-  These are used in the C stubs produced by the code generator
-  to register code.
- */
 void registerCcList(CostCentre **cc_list)
 {
     for (CostCentre **i = cc_list; *i != NULL; i++) {
-        REGISTER_CC(*i);
+        registerCC(*i);
     }
 }
 
 void registerCcsList(CostCentreStack **cc_list)
 {
     for (CostCentreStack **i = cc_list; *i != NULL; i++) {
-        REGISTER_CCS(*i);
+        registerCCS(*i);
     }
 }
 
@@ -476,48 +501,23 @@ ccsSetSelected (CostCentreStack *ccs)
    Cost-centre stack manipulation
    -------------------------------------------------------------------------- */
 
-#if defined(DEBUG)
-CostCentreStack * _pushCostCentre ( CostCentreStack *ccs, CostCentre *cc );
+/* Append ccs1 to ccs2 (ignoring any CAF cost centre at the root of ccs1 */
 CostCentreStack *
-pushCostCentre ( CostCentreStack *ccs, CostCentre *cc )
-#define pushCostCentre _pushCostCentre
+appendCCS ( CostCentreStack *ccs1, CostCentreStack *ccs2 )
 {
     IF_DEBUG(prof,
-             traceBegin("pushing %s on ", cc->label);
-             debugCCS(ccs);
-             traceEnd(););
+            if (ccs1 != ccs2) {
+              debugBelch("Appending ");
+              debugCCS(ccs1);
+              debugBelch(" to ");
+              debugCCS(ccs2);
+              debugBelch("\n");});
 
-    return pushCostCentre(ccs,cc);
-}
-#endif
-
-/* Append ccs1 to ccs2 (ignoring any CAF cost centre at the root of ccs1 */
-
-#if defined(DEBUG)
-CostCentreStack *_appendCCS ( CostCentreStack *ccs1, CostCentreStack *ccs2 );
-CostCentreStack *
-appendCCS ( CostCentreStack *ccs1, CostCentreStack *ccs2 )
-#define appendCCS _appendCCS
-{
-  IF_DEBUG(prof,
-          if (ccs1 != ccs2) {
-            debugBelch("Appending ");
-            debugCCS(ccs1);
-            debugBelch(" to ");
-            debugCCS(ccs2);
-            debugBelch("\n");});
-  return appendCCS(ccs1,ccs2);
-}
-#endif
-
-CostCentreStack *
-appendCCS ( CostCentreStack *ccs1, CostCentreStack *ccs2 )
-{
     if (ccs1 == ccs2) {
         return ccs1;
     }
 
-    if (ccs2 == CCS_MAIN || ccs2->cc->is_caf == CC_IS_CAF) {
+    if (ccs2 == CCS_MAIN || ccs2->cc->is_caf) {
         // stop at a CAF element
         return ccs1;
     }
@@ -532,8 +532,12 @@ appendCCS ( CostCentreStack *ccs1, CostCentreStack *ccs2 )
 CostCentreStack *
 pushCostCentre (CostCentreStack *ccs, CostCentre *cc)
 {
-    CostCentreStack *temp_ccs, *ret;
-    IndexTable *ixtable;
+    IF_DEBUG(prof,
+             traceBegin("pushing %s on ", cc->label);
+             debugCCS(ccs);
+             traceEnd(););
+
+    CostCentreStack *ret;
 
     if (ccs == EMPTY_STACK) {
         ACQUIRE_LOCK(&ccs_mutex);
@@ -545,8 +549,8 @@ pushCostCentre (CostCentreStack *ccs, CostCentre *cc)
             return ccs;
         } else {
             // check if we've already memoized this stack
-            ixtable = ccs->indexTable;
-            temp_ccs = isInIndexTable(ixtable,cc);
+            IndexTable *ixtable = ccs->indexTable;
+            CostCentreStack *temp_ccs = isInIndexTable(ixtable,cc);
 
             if (temp_ccs != EMPTY_STACK) {
                 return temp_ccs;
@@ -585,7 +589,7 @@ pushCostCentre (CostCentreStack *ccs, CostCentre *cc)
                     new_ccs = ccs;
 #endif
                     ccs->indexTable = addToIndexTable (ccs->indexTable,
-                                                       new_ccs, cc, 1);
+                                                       new_ccs, cc, true);
                     ret = new_ccs;
                 } else {
                     ret = actualPush (ccs,cc);
@@ -649,7 +653,7 @@ actualPush_ (CostCentreStack *ccs, CostCentre *cc, CostCentreStack *new_ccs)
 
     /* update the memoization table for the parent stack */
     ccs->indexTable = addToIndexTable(ccs->indexTable, new_ccs, cc,
-                                      0/*not a back edge*/);
+                                      false/*not a back edge*/);
 
     /* return a pointer to the new stack */
     return new_ccs;
@@ -674,7 +678,7 @@ isInIndexTable(IndexTable *it, CostCentre *cc)
 
 static IndexTable *
 addToIndexTable (IndexTable *it, CostCentreStack *new_ccs,
-                 CostCentre *cc, unsigned int back_edge)
+                 CostCentre *cc, bool back_edge)
 {
     IndexTable *new_it;
 
@@ -736,7 +740,7 @@ reportCCSProfiling( void )
 }
 
 /* -----------------------------------------------------------------------------
- * Accumulating total allocatinos and tick count
+ * Accumulating total allocations and tick count
    -------------------------------------------------------------------------- */
 
 /* Helper */

@@ -99,7 +99,7 @@ to the files ``Foo.hs`` and ``Bar.hs``.
 
     ``-fno-specialise -O1``
 
-        ``-fspecialise`` will be enabled as the ``-fno-specialise`` is overriden
+        ``-fspecialise`` will be enabled as the ``-fno-specialise`` is overridden
         by the ``-O1``.
 
     ``-O1 -fno-specialise``
@@ -202,6 +202,9 @@ the "right thing" to happen to those files.
 
 ``.hi``
     A Haskell interface file, probably compiler-generated.
+
+``.hie``
+    An extended Haskell interface file, produced by the Haskell compiler.
 
 ``.hc``
     Intermediate C file produced by the Haskell compiler.
@@ -306,7 +309,7 @@ The available mode flags are:
     :shortdesc: Stop after generating C (``.hc`` file)
     :type: mode
     :category: phases
-    
+
     Stop after generating C (``.hc`` file)
 
 .. ghc-flag:: -S
@@ -320,7 +323,7 @@ The available mode flags are:
     :shortdesc: Stop after generating object (``.o``) file
     :type: mode
     :category: phases
-    
+
     Stop after generating object (``.o``) file
 
     This is the traditional batch-compiler mode, in which GHC can
@@ -711,13 +714,13 @@ messages and in GHCi:
 
 .. ghc-flag:: -fprint-unicode-syntax
     :shortdesc: Use unicode syntax when printing expressions, types and kinds.
-        See also :ghc-flag:`-XUnicodeSyntax`
+        See also :extension:`UnicodeSyntax`
     :type: dynamic
     :reverse: -fno-print-unicode-syntax
     :category: verbosity
 
     When enabled GHC prints type signatures using the unicode symbols from the
-    :ghc-flag:`-XUnicodeSyntax` extension. For instance,
+    :extension:`UnicodeSyntax` extension. For instance,
 
     .. code-block:: none
 
@@ -729,7 +732,7 @@ messages and in GHCi:
 
 .. ghc-flag:: -fprint-explicit-foralls
     :shortdesc: Print explicit ``forall`` quantification in types.
-        See also :ghc-flag:`-XExplicitForAll`
+        See also :extension:`ExplicitForAll`
     :type: dynamic
     :reverse: -fno-print-explicit-foralls
     :category: verbosity
@@ -764,13 +767,13 @@ messages and in GHCi:
 
            ghci> :i Data.Type.Equality.sym
            Data.Type.Equality.sym ::
-             forall (k :: BOX) (a :: k) (b :: k).
+             forall k (a :: k) (b :: k).
              (a Data.Type.Equality.:~: b) -> b Data.Type.Equality.:~: a
                    -- Defined in Data.Type.Equality
 
 .. ghc-flag:: -fprint-explicit-kinds
     :shortdesc: Print explicit kind foralls and kind arguments in types.
-        See also :ghc-flag:`-XKindSignatures`
+        See also :extension:`KindSignatures`
     :type: dynamic
     :reverse: -fno-print-explicit-kinds
     :category: verbosity
@@ -781,34 +784,28 @@ messages and in GHCi:
 
     .. code-block:: none
 
-        ghci> :set -XPolyKinds
-        ghci> data T a = MkT
-        ghci> :t MkT
-        MkT :: forall (k :: BOX) (a :: k). T a
-        ghci> :set -fprint-explicit-foralls
-        ghci> :t MkT
-        MkT :: forall (k :: BOX) (a :: k). T k a
+           ghci> :set -XPolyKinds
+           ghci> data T a (b :: l) = MkT
+           ghci> :t MkT
+           MkT :: forall k l (a :: k) (b :: l). T a b
+           ghci> :set -fprint-explicit-kinds
+           ghci> :t MkT
+           MkT :: forall k l (a :: k) (b :: l). T @{k} @l a b
+           ghci> :set -XNoPolyKinds
+           ghci> :t MkT
+           MkT :: T @{*} @* a b
 
-.. ghc-flag:: -fprint-explicit-runtime-reps
-    :shortdesc: Print ``RuntimeRep`` variables in types which are
-        runtime-representation polymorphic.
-    :type: dynamic
-    :reverse: -fno-print-explicit-runtime-reps
-    :category: verbosity
-
-    When :ghc-flag:`-fprint-explicit-runtime-reps` is enabled, GHC prints
-    ``RuntimeRep`` type variables for levity-polymorphic types.
-    Otherwise GHC will default these to ``LiftedRep``. For example,
-
-    .. code-block:: none
-
-        ghci> :t ($)
-        ($) :: (a -> b) -> a -> b
-        ghci> :set -fprint-explicit-runtime-reps
-        ghci> :t ($)
-        ($)
-          :: forall (r :: GHC.Types.RuntimeRep) a (b :: TYPE r).
-             (a -> b) -> a -> b
+    In the output above, observe that ``T`` has two kind variables
+    (``k`` and ``l``) and two type variables (``a`` and ``b``). Note that
+    ``k`` is an *inferred* variable and ``l`` is a *specified* variable
+    (see :ref:`inferred-vs-specified`), so as a result, they are displayed
+    using slightly different syntax in the type ``T @{k} @l a b``. The
+    application of ``l`` (with ``@l``) is the standard syntax for visible
+    type application (see :ref:`visible-type-application`). The application
+    of ``k`` (with ``@{k}``), however, uses a hypothetical syntax for visible
+    type application of inferred type variables. This syntax is not currently
+    exposed to the programmer, but it is nevertheless displayed when
+    :ghc-flag:`-fprint-explicit-kinds` is enabled.
 
 .. ghc-flag:: -fprint-explicit-coercions
     :shortdesc: Print coercions in types
@@ -820,6 +817,37 @@ messages and in GHCi:
     types. When trying to prove the equality between types of different
     kinds, GHC uses type-level coercions. Users will rarely need to
     see these, as they are meant to be internal.
+
+.. ghc-flag:: -fprint-axiom-incomps
+    :shortdesc: Display equation incompatibilities in closed type families
+    :type: dynamic
+    :reverse: -fno-print-axiom-incomps
+    :category: verbosity
+
+    Using :ghc-flag:`-fprint-axiom-incomps` tells GHC to display
+    incompatibilities between closed type families' equations, whenever they
+    are printed by :ghci-cmd:`:info` or :ghc-flag:`--show-iface ⟨file⟩`.
+
+    .. code-block:: none
+
+        ghci> :i Data.Type.Equality.==
+        type family (==) (a :: k) (b :: k) :: Bool
+          where
+              (==) (f a) (g b) = (f == g) && (a == b)
+              (==) a a = 'True
+              (==) _1 _2 = 'False
+        ghci> :set -fprint-axiom-incomps
+        ghci> :i Data.Type.Equality.==
+        type family (==) (a :: k) (b :: k) :: Bool
+          where
+              {- #0 -} (==) (f a) (g b) = (f == g) && (a == b)
+              {- #1 -} (==) a a = 'True
+                  -- incompatible with: #0
+              {- #2 -} (==) _1 _2 = 'False
+                  -- incompatible with: #1, #0
+
+    The equations are numbered starting from 0, and the comment after each
+    equation refers to all preceding equations it is incompatible with.
 
 .. ghc-flag:: -fprint-equality-relations
     :shortdesc: Distinguish between equality relations when printing
@@ -910,6 +938,18 @@ messages and in GHCi:
                   in a’
         or by using the flag -fno-warn-unused-do-bind
 
+.. ghc-flag:: -fdefer-diagnostics
+    :shortdesc: Defer and group diagnostic messages by severity
+    :type: dynamic
+    :category: verbosity
+
+    Causes GHC to group diagnostic messages by severity and output them after
+    other messages when building a multi-module Haskell program. This flag can
+    make diagnostic messages more visible when used in conjunction with
+    :ghc-flag:`--make` and :ghc-flag:`-j[⟨n⟩]`. Otherwise, it can be hard to
+    find the relevant errors or likely to ignore the warnings when they are
+    mixed with many other messages.
+
 .. ghc-flag:: -fdiagnostics-color=⟨always|auto|never⟩
     :shortdesc: Use colors in error messages
     :type: dynamic
@@ -998,6 +1038,18 @@ messages and in GHCi:
     start at zero. This choice was made to follow existing convention
     (i.e. this is how Emacs does it).
 
+.. ghc-flag:: -fkeep-going
+    :shortdesc: Continue compilation as far as possible on errors
+    :type: dynamic
+    :category: verbosity
+
+    :since: 8.10.1
+
+    Causes GHC to continue the compilation if a module has an error.
+    Any reverse dependencies are pruned immediately and the whole
+    compilation is still flagged as an error.  This option has no
+    effect if parallel compilation (:ghc-flag:`-j[⟨n⟩]`) is in use.
+
 .. ghc-flag:: -freverse-errors
     :shortdesc: Output errors in reverse order
     :type: dynamic
@@ -1067,6 +1119,37 @@ Some flags only make sense for particular target platforms.
     SSE4.2 if your processor supports it but detects this automatically
     so no flag is required.
 
+.. ghc-flag:: -mbmi2
+    :shortdesc: (x86 only) Use BMI2 for bit manipulation operations
+    :type: dynamic
+    :category: platform-options
+
+    (x86 only, added in GHC 7.4.1) Use the BMI2 instruction set to
+    implement some bit operations when using the
+    :ref:`native code generator <native-code-gen>`. The resulting compiled
+    code will only run on processors that support BMI2 (Intel Haswell and newer, AMD Excavator, Zen and newer).
+
+Haddock
+-------
+
+.. index::
+   single: haddock
+
+.. ghc-flag:: -haddock
+    :shortdesc: With this flag GHC will parse Haddock comments and include them
+      in the interface file it produces.
+    :type: dynamic
+    :reverse: -no-haddock
+    :category: haddock
+
+    By default, GHC ignores Haddock comments (``-- | ...`` and ``-- ^ ...``)
+    and does not check that they're associated with a valid term, such as a
+    top-level type-signature.  With this flag GHC will parse Haddock comments
+    and include them in the interface file it produces.
+
+    Note that this flag makes GHC's parser more strict so programs which are
+    accepted without Haddock may be rejected with :ghc-flag:`-haddock`.
+
 Miscellaneous flags
 -------------------
 
@@ -1089,3 +1172,13 @@ Some flags only make sense for a particular use case.
     ``ghcversions.h`` file to be included. This is primarily intended to be
     used by GHC's build system.
 
+Other environment variables
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. index::
+   single: environment variables
+
+GHC can also be configured using environment variables. Currently the only
+variable it supports is ``GHC_NO_UNICODE``, which, when set, disables Unicode
+output regardless of locale settings. ``GHC_NO_UNICODE`` can be set to anything
++(event an empty string) to trigger this behaviour.

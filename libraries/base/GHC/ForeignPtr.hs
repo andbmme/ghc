@@ -4,7 +4,7 @@
            , MagicHash
            , UnboxedTuples
   #-}
-{-# OPTIONS_HADDOCK hide #-}
+{-# OPTIONS_HADDOCK not-home #-}
 {-# LANGUAGE StandaloneDeriving #-}
 
 -----------------------------------------------------------------------------
@@ -23,10 +23,13 @@
 
 module GHC.ForeignPtr
   (
+        -- * Types
         ForeignPtr(..),
         ForeignPtrContents(..),
+        Finalizers(..),
         FinalizerPtr,
         FinalizerEnvPtr,
+        -- * Create
         newForeignPtr_,
         mallocForeignPtr,
         mallocPlainForeignPtr,
@@ -34,15 +37,20 @@ module GHC.ForeignPtr
         mallocPlainForeignPtrBytes,
         mallocForeignPtrAlignedBytes,
         mallocPlainForeignPtrAlignedBytes,
+        newConcForeignPtr,
+        -- * Add Finalizers
         addForeignPtrFinalizer,
         addForeignPtrFinalizerEnv,
-        touchForeignPtr,
+        addForeignPtrConcFinalizer,
+        -- * Conversion
         unsafeForeignPtrToPtr,
         castForeignPtr,
         plusForeignPtr,
-        newConcForeignPtr,
-        addForeignPtrConcFinalizer,
+        -- * Finalization
+        touchForeignPtr,
         finalizeForeignPtr
+        -- * Commentary
+        -- $commentary
   ) where
 
 import Foreign.Storable
@@ -53,6 +61,8 @@ import GHC.Base
 import GHC.IORef
 import GHC.STRef        ( STRef(..) )
 import GHC.Ptr          ( Ptr(..), FunPtr(..) )
+
+import Unsafe.Coerce    ( unsafeCoerce, unsafeCoerceUnlifted )
 
 -- |The type 'ForeignPtr' represents references to objects that are
 -- maintained in a foreign language, i.e., that are not part of the
@@ -83,15 +93,121 @@ data ForeignPtr a = ForeignPtr Addr# ForeignPtrContents
         -- object, because that ensures that whatever the finalizer is
         -- attached to is kept alive.
 
+-- | Functions called when a 'ForeignPtr' is finalized. Note that
+-- C finalizers and Haskell finalizers cannot be mixed.
 data Finalizers
   = NoFinalizers
+    -- ^ No finalizer. If there is no intent to add a finalizer at
+    -- any point in the future, consider 'FinalPtr' or 'PlainPtr' instead
+    -- since these perform fewer allocations.
   | CFinalizers (Weak# ())
+    -- ^ Finalizers are all C functions.
   | HaskellFinalizers [IO ()]
+    -- ^ Finalizers are all Haskell functions.
 
+-- | Controls finalization of a 'ForeignPtr', that is, what should happen
+-- if the 'ForeignPtr' becomes unreachable. Visually, these data constructors
+-- are appropriate in these scenarios:
+--
+-- >                           Memory backing pointer is
+-- >                            GC-Managed   Unmanaged
+-- > Finalizer functions are: +------------+-----------------+
+-- >                 Allowed  | MallocPtr  | PlainForeignPtr |
+-- >                          +------------+-----------------+
+-- >              Prohibited  | PlainPtr   | FinalPtr        |
+-- >                          +------------+-----------------+
 data ForeignPtrContents
   = PlainForeignPtr !(IORef Finalizers)
-  | MallocPtr      (MutableByteArray# RealWorld) !(IORef Finalizers)
-  | PlainPtr       (MutableByteArray# RealWorld)
+    -- ^ The pointer refers to unmanaged memory that was allocated by
+    -- a foreign function (typically using @malloc@). The finalizer
+    -- frequently calls the C function @free@ or some variant of it.
+  | FinalPtr
+    -- ^ The pointer refers to unmanaged memory that should not be freed when
+    -- the 'ForeignPtr' becomes unreachable. Functions that add finalizers
+    -- to a 'ForeignPtr' throw exceptions when the 'ForeignPtr' is backed by
+    -- 'PlainPtr'Most commonly, this is used with @Addr#@ literals.
+    -- See Note [Why FinalPtr].
+    --
+    -- @since 4.15
+  | MallocPtr (MutableByteArray# RealWorld) !(IORef Finalizers)
+    -- ^ The pointer refers to a byte array.
+    -- The 'MutableByteArray#' field means that the 'MutableByteArray#' is
+    -- reachable (by GC) whenever the 'ForeignPtr' is reachable. When the
+    -- 'ForeignPtr' becomes unreachable, the runtime\'s normal GC recovers
+    -- the memory backing it. Here, the finalizer function intended to be used
+    -- to @free()@ any ancilliary *unmanaged* memory pointed to by the
+    -- 'MutableByteArray#'. See the @zlib@ library for an example of this use.
+    --
+    -- 1. Invariant: The 'Addr#' in the parent 'ForeignPtr' is an interior
+    --    pointer into this 'MutableByteArray#'.
+    -- 2. Invariant: The 'MutableByteArray#' is pinned, so the 'Addr#' does not
+    --    get invalidated by the GC moving the byte array.
+    -- 3. Invariant: A 'MutableByteArray#' must not be associated with more than
+    --    one set of finalizers. For example, this is sound:
+    --
+    --    > incrGood :: ForeignPtr Word8 -> ForeignPtr Word8
+    --    > incrGood (ForeignPtr p (MallocPtr m f)) = ForeignPtr (plusPtr p 1) (MallocPtr m f)
+    --
+    --    But this is unsound:
+    --
+    --    > incrBad :: ForeignPtr Word8 -> IO (ForeignPtr Word8)
+    --    > incrBad (ForeignPtr p (MallocPtr m _)) = do
+    --    >   f <- newIORef NoFinalizers
+    --    >   pure (ForeignPtr p (MallocPtr m f))
+  | PlainPtr (MutableByteArray# RealWorld)
+    -- ^ The pointer refers to a byte array. Finalization is not
+    -- supported. This optimizes @MallocPtr@ by avoiding the allocation
+    -- of a @MutVar#@ when it is known that no one will add finalizers to
+    -- the @ForeignPtr@. Functions that add finalizers to a 'ForeignPtr'
+    -- throw exceptions when the 'ForeignPtr' is backed by 'PlainPtr'.
+    -- The invariants that apply to 'MallocPtr' apply to 'PlainPtr' as well.
+
+-- Note [Why FinalPtr]
+--
+-- FinalPtr exists as an optimization for foreign pointers created
+-- from Addr# literals. Most commonly, this happens in the bytestring
+-- library, where the combination of OverloadedStrings and a rewrite
+-- rule overloads String literals as ByteString literals. See the
+-- rule "ByteString packChars/packAddress" in
+-- bytestring:Data.ByteString.Internal. Prior to the
+-- introduction of FinalPtr, bytestring used PlainForeignPtr (in
+-- Data.ByteString.Internal.unsafePackAddress) to handle such literals.
+-- With O2 optimization, the resulting Core from a GHC patched with a
+-- known-key cstringLength# function but without FinalPtr looked like:
+--
+--   RHS size: {terms: 1, types: 0, coercions: 0, joins: 0/0}
+--   stringOne1 = "hello beautiful world"#
+--   RHS size: {terms: 11, types: 17, coercions: 0, joins: 0/0}
+--   stringOne
+--     = case newMutVar# NoFinalizers realWorld# of
+--       { (# ipv_i7b6, ipv1_i7b7 #) ->
+--       PS stringOne1 (PlainForeignPtr ipv1_i7b7) 0# 21#
+--       }
+--
+-- After the introduction of FinalPtr, the bytestring library was modified
+-- so that the resulting Core was instead:
+--
+--   RHS size: {terms: 1, types: 0, coercions: 0, joins: 0/0}
+--   stringOne1 = "hello beautiful world"#
+--   RHS size: {terms: 5, types: 0, coercions: 0, joins: 0/0}
+--   stringOne = PS stringOne1 FinalPtr 0# 21#
+--
+-- This improves performance in three ways:
+--
+-- 1. More optimization opportunities. GHC is willing to inline the FinalPtr
+--    variant of stringOne into its use sites. This means the offset and length
+--    are eligible for case-of-known-literal. Previously, this never happened.
+-- 2. Smaller binaries. Setting up the thunk to call newMutVar# required
+--    machine instruction in the generated code. On x86_64, FinalPtr reduces
+--    the size of binaries by about 450 bytes per ByteString literal.
+-- 3. Smaller memory footprint. Previously, every ByteString literal resulted
+--    in the allocation of a MutVar# and a PlainForeignPtr data constructor.
+--    These both hang around until the ByteString goes out of scope. FinalPtr
+--    eliminates both of these sources of allocations. The MutVar# is not
+--    allocated because FinalPtr does not allow it, and the data constructor
+--    is not allocated because FinalPtr is a nullary data constructor.
+--
+-- For more discussion of FinalPtr, see GHC MR #2165 and bytestring PR #191.
 
 -- | @since 2.01
 instance Eq (ForeignPtr a) where
@@ -164,7 +280,7 @@ mallocForeignPtr = doMalloc undefined
           r <- newIORef NoFinalizers
           IO $ \s ->
             case newAlignedPinnedByteArray# size align s of { (# s', mbarr# #) ->
-             (# s', ForeignPtr (byteArrayContents# (unsafeCoerce# mbarr#))
+             (# s', ForeignPtr (byteArrayContents# (unsafeCoerceUnlifted mbarr#))
                                (MallocPtr mbarr# r) #)
             }
             where !(I# size)  = sizeOf a
@@ -179,7 +295,7 @@ mallocForeignPtrBytes (I# size) = do
   r <- newIORef NoFinalizers
   IO $ \s ->
      case newPinnedByteArray# size s      of { (# s', mbarr# #) ->
-       (# s', ForeignPtr (byteArrayContents# (unsafeCoerce# mbarr#))
+       (# s', ForeignPtr (byteArrayContents# (unsafeCoerceUnlifted mbarr#))
                          (MallocPtr mbarr# r) #)
      }
 
@@ -193,7 +309,7 @@ mallocForeignPtrAlignedBytes (I# size) (I# align) = do
   r <- newIORef NoFinalizers
   IO $ \s ->
      case newAlignedPinnedByteArray# size align s of { (# s', mbarr# #) ->
-       (# s', ForeignPtr (byteArrayContents# (unsafeCoerce# mbarr#))
+       (# s', ForeignPtr (byteArrayContents# (unsafeCoerceUnlifted mbarr#))
                          (MallocPtr mbarr# r) #)
      }
 
@@ -217,7 +333,7 @@ mallocPlainForeignPtr = doMalloc undefined
           | I# size < 0 = errorWithoutStackTrace "mallocForeignPtr: size must be >= 0"
           | otherwise = IO $ \s ->
             case newAlignedPinnedByteArray# size align s of { (# s', mbarr# #) ->
-             (# s', ForeignPtr (byteArrayContents# (unsafeCoerce# mbarr#))
+             (# s', ForeignPtr (byteArrayContents# (unsafeCoerceUnlifted mbarr#))
                                (PlainPtr mbarr#) #)
             }
             where !(I# size)  = sizeOf a
@@ -232,7 +348,7 @@ mallocPlainForeignPtrBytes size | size < 0 =
   errorWithoutStackTrace "mallocPlainForeignPtrBytes: size must be >= 0"
 mallocPlainForeignPtrBytes (I# size) = IO $ \s ->
     case newPinnedByteArray# size s      of { (# s', mbarr# #) ->
-       (# s', ForeignPtr (byteArrayContents# (unsafeCoerce# mbarr#))
+       (# s', ForeignPtr (byteArrayContents# (unsafeCoerceUnlifted mbarr#))
                          (PlainPtr mbarr#) #)
      }
 
@@ -245,18 +361,18 @@ mallocPlainForeignPtrAlignedBytes size _align | size < 0 =
   errorWithoutStackTrace "mallocPlainForeignPtrAlignedBytes: size must be >= 0"
 mallocPlainForeignPtrAlignedBytes (I# size) (I# align) = IO $ \s ->
     case newAlignedPinnedByteArray# size align s of { (# s', mbarr# #) ->
-       (# s', ForeignPtr (byteArrayContents# (unsafeCoerce# mbarr#))
+       (# s', ForeignPtr (byteArrayContents# (unsafeCoerceUnlifted mbarr#))
                          (PlainPtr mbarr#) #)
      }
 
 addForeignPtrFinalizer :: FinalizerPtr a -> ForeignPtr a -> IO ()
--- ^This function adds a finalizer to the given foreign object.  The
+-- ^ This function adds a finalizer to the given foreign object.  The
 -- finalizer will run /before/ all other finalizers for the same
 -- object which have already been registered.
 addForeignPtrFinalizer (FunPtr fp) (ForeignPtr p c) = case c of
   PlainForeignPtr r -> insertCFinalizer r fp 0# nullAddr# p ()
   MallocPtr     _ r -> insertCFinalizer r fp 0# nullAddr# p c
-  _ -> errorWithoutStackTrace "GHC.ForeignPtr: attempt to add a finalizer to a plain pointer"
+  _ -> errorWithoutStackTrace "GHC.ForeignPtr: attempt to add a finalizer to a plain pointer or a final pointer"
 
 -- Note [MallocPtr finalizers] (#10904)
 --
@@ -269,14 +385,12 @@ addForeignPtrFinalizer (FunPtr fp) (ForeignPtr p c) = case c of
 
 addForeignPtrFinalizerEnv ::
   FinalizerEnvPtr env a -> Ptr env -> ForeignPtr a -> IO ()
--- ^ Like 'addForeignPtrFinalizerEnv' but allows the finalizer to be
--- passed an additional environment parameter to be passed to the
--- finalizer.  The environment passed to the finalizer is fixed by the
--- second argument to 'addForeignPtrFinalizerEnv'
+-- ^ Like 'addForeignPtrFinalizer' but the finalizer is passed an additional
+-- environment parameter.
 addForeignPtrFinalizerEnv (FunPtr fp) (Ptr ep) (ForeignPtr p c) = case c of
   PlainForeignPtr r -> insertCFinalizer r fp 1# ep p ()
   MallocPtr     _ r -> insertCFinalizer r fp 1# ep p c
-  _ -> errorWithoutStackTrace "GHC.ForeignPtr: attempt to add a finalizer to a plain pointer"
+  _ -> errorWithoutStackTrace "GHC.ForeignPtr: attempt to add a finalizer to a plain pointer or a final pointer"
 
 addForeignPtrConcFinalizer :: ForeignPtr a -> IO () -> IO ()
 -- ^This function adds a finalizer to the given @ForeignPtr@.  The
@@ -318,7 +432,7 @@ addForeignPtrConcFinalizer_ f@(MallocPtr fo r) finalizer = do
     finalizer' = unIO (foreignPtrFinalizer r >> touch f)
 
 addForeignPtrConcFinalizer_ _ _ =
-  errorWithoutStackTrace "GHC.ForeignPtr: attempt to add a finalizer to plain pointer"
+  errorWithoutStackTrace "GHC.ForeignPtr: attempt to add a finalizer to plain pointer or a final pointer"
 
 insertHaskellFinalizer :: IORef Finalizers -> IO () -> IO Bool
 insertHaskellFinalizer r f = do
@@ -344,6 +458,8 @@ insertCFinalizer r fp flag ep p val = do
       -- replaced the content of r before calling finalizeWeak#.
       (# s1, _ #) -> unIO (insertCFinalizer r fp flag ep p val) s1
 
+-- Read the weak reference from an IORef Finalizers, creating it if necessary.
+-- Throws an exception if HaskellFinalizers is encountered.
 ensureCFinalizerWeak :: IORef Finalizers -> value -> IO MyWeak
 ensureCFinalizerWeak ref@(IORef (STRef r#)) value = do
   fin <- readIORef ref
@@ -351,7 +467,7 @@ ensureCFinalizerWeak ref@(IORef (STRef r#)) value = do
       CFinalizers weak -> return (MyWeak weak)
       HaskellFinalizers{} -> noMixingError
       NoFinalizers -> IO $ \s ->
-          case mkWeakNoFinalizer# r# (unsafeCoerce# value) s of { (# s1, w #) ->
+          case mkWeakNoFinalizer# r# (unsafeCoerce value) s of { (# s1, w #) ->
              -- See Note [MallocPtr finalizers] (#10904)
           case atomicModifyMutVar2# r# (update w) s1 of
               { (# s2, _, (_, (weak, needKill )) #) ->
@@ -369,6 +485,7 @@ noMixingError = errorWithoutStackTrace $
    "GHC.ForeignPtr: attempt to mix Haskell and C finalizers " ++
    "in the same ForeignPtr"
 
+-- Swap out the finalizers with NoFinalizers and then run them.
 foreignPtrFinalizer :: IORef Finalizers -> IO ()
 foreignPtrFinalizer r = do
   fs <- atomicSwapIORef r NoFinalizers
@@ -454,14 +571,55 @@ plusForeignPtr :: ForeignPtr a -> Int -> ForeignPtr b
 plusForeignPtr (ForeignPtr addr c) (I# d) = ForeignPtr (plusAddr# addr d) c
 
 -- | Causes the finalizers associated with a foreign pointer to be run
--- immediately.
+-- immediately. The foreign pointer must not be used again after this
+-- function is called. If the foreign pointer does not support finalizers,
+-- this is a no-op.
 finalizeForeignPtr :: ForeignPtr a -> IO ()
-finalizeForeignPtr (ForeignPtr _ (PlainPtr _)) = return () -- no effect
-finalizeForeignPtr (ForeignPtr _ foreignPtr) = foreignPtrFinalizer refFinalizers
-        where
-                refFinalizers = case foreignPtr of
-                        (PlainForeignPtr ref) -> ref
-                        (MallocPtr     _ ref) -> ref
-                        PlainPtr _            ->
-                            errorWithoutStackTrace "finalizeForeignPtr PlainPtr"
+finalizeForeignPtr (ForeignPtr _ c) = case c of
+  PlainForeignPtr ref -> foreignPtrFinalizer ref
+  MallocPtr _ ref -> foreignPtrFinalizer ref
+  PlainPtr{} -> return ()
+  FinalPtr{} -> return ()
 
+{- $commentary
+
+This is a high-level overview of how 'ForeignPtr' works.
+The implementation of 'ForeignPtr' must accomplish several goals:
+
+1. Invoke a finalizer once a foreign pointer becomes unreachable.
+2. Support augmentation of finalizers, i.e. 'addForeignPtrFinalizer'.
+   As a motivating example, suppose that the payload of a foreign
+   pointer is C struct @bar@ that has an optionally NULL pointer field
+   @foo@ to an unmanaged heap object. Initially, @foo@ is NULL, and
+   later the program uses @malloc@, initializes the object, and assigns
+   @foo@ the address returned by @malloc@. When the foreign pointer
+   becomes unreachable, it is now necessary to first @free@ the object
+   pointed to by @foo@ and then invoke whatever finalizer was associated
+   with @bar@. That is, finalizers must be invoked in the opposite order
+   they are added.
+3. Allow users to invoke a finalizer promptly if they know that the
+   foreign pointer is unreachable, i.e. 'finalizeForeignPtr'.
+
+How can these goals be accomplished? Goal 1 suggests that weak references
+and finalizers (via 'Weak#' and 'mkWeak#') are necessary. But how should
+they be used and what should their key be?  Certainly not 'ForeignPtr' or
+'ForeignPtrContents'. See the warning in "GHC.Weak" about weak pointers with
+lifted (non-primitive) keys. The two finalizer-supporting data constructors of
+'ForeignPtr' have an @'IORef' 'Finalizers'@ (backed by 'MutVar#') field.
+This gets used in two different ways depending on the kind of finalizer:
+
+* 'HaskellFinalizers': The first @addForeignPtrConcFinalizer_@ call uses
+  'mkWeak#' to attach the finalizer @foreignPtrFinalizer@ to the 'MutVar#'.
+  The resulting 'Weak#' is discarded (see @addForeignPtrConcFinalizer_@).
+  Subsequent calls to @addForeignPtrConcFinalizer_@ (goal 2) just add
+  finalizers onto the list in the 'HaskellFinalizers' data constructor.
+* 'CFinalizers': The first 'addForeignPtrFinalizer' call uses
+  'mkWeakNoFinalizer#' to create a 'Weak#'. The 'Weak#' is preserved in the
+  'CFinalizers' data constructor. Both the first call and subsequent
+  calls (goal 2) use 'addCFinalizerToWeak#' to attach finalizers to the
+  'Weak#' itself. Also, see Note [MallocPtr finalizers] for discussion of
+  the key and value of this 'Weak#'.
+
+In either case, the runtime invokes the appropriate finalizers when the
+'ForeignPtr' becomes unreachable.
+-}

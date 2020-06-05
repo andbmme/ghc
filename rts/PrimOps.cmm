@@ -7,17 +7,17 @@
  *
  * This file contains the implementations of all the primitive
  * operations ("primops") which are not expanded inline.  See
- * ghc/compiler/prelude/primops.txt.pp for a list of all the primops;
+ * ghc/compiler/GHC/Builtin/primops.txt.pp for a list of all the primops;
  * this file contains code for most of those with the attribute
  * out_of_line=True.
  *
  * Entry convention: the entry convention for a primop is the
  * NativeNodeCall convention, and the return convention is
- * NativeReturn.  (see compiler/cmm/CmmCallConv.hs)
+ * NativeReturn.  (see compiler/GHC/Cmm/CallConv.hs)
  *
  * This file is written in a subset of C--, extended with various
  * features specific to GHC.  It is compiled by GHC directly.  For the
- * syntax of .cmm files, see the parser in ghc/compiler/cmm/CmmParse.y.
+ * syntax of .cmm files, see the parser in ghc/compiler/GHC/Cmm/Parser.y.
  *
  * ---------------------------------------------------------------------------*/
 
@@ -31,12 +31,12 @@ import pthread_mutex_unlock;
 #endif
 import CLOSURE base_ControlziExceptionziBase_nestedAtomically_closure;
 import CLOSURE base_GHCziIOziException_heapOverflow_closure;
+import CLOSURE base_GHCziExceptionziType_divZZeroException_closure;
+import CLOSURE base_GHCziExceptionziType_underflowException_closure;
+import CLOSURE base_GHCziExceptionziType_overflowException_closure;
 import EnterCriticalSection;
 import LeaveCriticalSection;
 import CLOSURE ghczmprim_GHCziTypes_False_closure;
-#if defined(USE_MINIINTERPRETER) || !defined(mingw32_HOST_OS)
-import CLOSURE sm_mutex;
-#endif
 #if defined(PROFILING)
 import CLOSURE CCS_MAIN;
 #endif
@@ -89,22 +89,16 @@ stg_newPinnedByteArrayzh ( W_ n )
     /* When we actually allocate memory, we need to allow space for the
        header: */
     bytes = bytes + SIZEOF_StgArrBytes;
-    /* And we want to align to BA_ALIGN bytes, so we need to allow space
-       to shift up to BA_ALIGN - 1 bytes: */
-    bytes = bytes + BA_ALIGN - 1;
     /* Now we convert to a number of words: */
     words = ROUNDUP_BYTES_TO_WDS(bytes);
 
-    ("ptr" p) = ccall allocatePinned(MyCapability() "ptr", words);
+    ("ptr" p) = ccall allocatePinned(MyCapability() "ptr", words, BA_ALIGN, SIZEOF_StgArrBytes);
     if (p == NULL) {
         jump stg_raisezh(base_GHCziIOziException_heapOverflow_closure);
     }
     TICK_ALLOC_PRIM(SIZEOF_StgArrBytes,WDS(payload_words),0);
 
-    /* Now we need to move p forward so that the payload is aligned
-       to BA_ALIGN bytes: */
-    p = p + ((-p - SIZEOF_StgArrBytes) & BA_MASK);
-
+    /* No write barrier needed since this is a new allocation. */
     SET_HDR(p, stg_ARR_WORDS_info, CCCS);
     StgArrBytes_bytes(p) = n;
     return (p);
@@ -120,7 +114,7 @@ stg_newAlignedPinnedByteArrayzh ( W_ n, W_ alignment )
     /* we always supply at least word-aligned memory, so there's no
        need to allow extra space for alignment if the requirement is less
        than a word.  This also prevents mischief with alignment == 0. */
-    if (alignment <= SIZEOF_W) { alignment = 1; }
+    if (alignment <= SIZEOF_W) { alignment = SIZEOF_W; }
 
     bytes = n;
 
@@ -130,23 +124,16 @@ stg_newAlignedPinnedByteArrayzh ( W_ n, W_ alignment )
     /* When we actually allocate memory, we need to allow space for the
        header: */
     bytes = bytes + SIZEOF_StgArrBytes;
-    /* And we want to align to <alignment> bytes, so we need to allow space
-       to shift up to <alignment - 1> bytes: */
-    bytes = bytes + alignment - 1;
     /* Now we convert to a number of words: */
     words = ROUNDUP_BYTES_TO_WDS(bytes);
 
-    ("ptr" p) = ccall allocatePinned(MyCapability() "ptr", words);
+    ("ptr" p) = ccall allocatePinned(MyCapability() "ptr", words, alignment, SIZEOF_StgArrBytes);
     if (p == NULL) {
         jump stg_raisezh(base_GHCziIOziException_heapOverflow_closure);
     }
     TICK_ALLOC_PRIM(SIZEOF_StgArrBytes,WDS(payload_words),0);
 
-    /* Now we need to move p forward so that the payload is aligned
-       to <alignment> bytes. Note that we are assuming that
-       <alignment> is a power of 2, which is technically not guaranteed */
-    p = p + ((-p - SIZEOF_StgArrBytes) & (alignment - 1));
-
+    /* No write barrier needed since this is a new allocation. */
     SET_HDR(p, stg_ARR_WORDS_info, CCCS);
     StgArrBytes_bytes(p) = n;
     return (p);
@@ -171,17 +158,27 @@ stg_isMutableByteArrayPinnedzh ( gcptr mba )
     jump stg_isByteArrayPinnedzh(mba);
 }
 
+/* Note [LDV profiling and resizing arrays]
+ * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ *
+ * As far as the LDV profiler is concerned arrays are "inherently used" which
+ * means we don't track their time of use and eventual destruction. We just
+ * assume they get used.
+ *
+ * Thus it is not necessary to call LDV_RECORD_CREATE when resizing them as we
+ * used to as the LDV profiler will essentially ignore arrays anyways.
+ */
+
 // shrink size of MutableByteArray in-place
 stg_shrinkMutableByteArrayzh ( gcptr mba, W_ new_size )
 // MutableByteArray# s -> Int# -> State# s -> State# s
 {
-   ASSERT(new_size >= 0);
    ASSERT(new_size <= StgArrBytes_bytes(mba));
 
-   OVERWRITING_CLOSURE_OFS(mba, (BYTES_TO_WDS(SIZEOF_StgArrBytes) +
-                                 ROUNDUP_BYTES_TO_WDS(new_size)));
+   OVERWRITING_CLOSURE_MUTABLE(mba, (BYTES_TO_WDS(SIZEOF_StgArrBytes) +
+                                     ROUNDUP_BYTES_TO_WDS(new_size)));
    StgArrBytes_bytes(mba) = new_size;
-   LDV_RECORD_CREATE(mba);
+   // No need to call LDV_RECORD_CREATE. See Note [LDV profiling and resizing arrays]
 
    return ();
 }
@@ -202,10 +199,10 @@ stg_resizzeMutableByteArrayzh ( gcptr mba, W_ new_size )
    new_size_wds = ROUNDUP_BYTES_TO_WDS(new_size);
 
    if (new_size_wds <= BYTE_ARR_WDS(mba)) {
-      OVERWRITING_CLOSURE_OFS(mba, (BYTES_TO_WDS(SIZEOF_StgArrBytes) +
-                                    new_size_wds));
+      OVERWRITING_CLOSURE_MUTABLE(mba, (BYTES_TO_WDS(SIZEOF_StgArrBytes) +
+                                        new_size_wds));
       StgArrBytes_bytes(mba) = new_size;
-      LDV_RECORD_CREATE(mba);
+      // No need to call LDV_RECORD_CREATE. See Note [LDV profiling and resizing arrays]
 
       return (mba);
    } else {
@@ -223,6 +220,20 @@ stg_resizzeMutableByteArrayzh ( gcptr mba, W_ new_size )
 
       return (new_mba);
    }
+}
+
+// shrink size of SmallMutableArray in-place
+stg_shrinkSmallMutableArrayzh ( gcptr mba, W_ new_size )
+// SmallMutableArray# s -> Int# -> State# s -> State# s
+{
+   ASSERT(new_size <= StgSmallMutArrPtrs_ptrs(mba));
+
+   OVERWRITING_CLOSURE_MUTABLE(mba, (BYTES_TO_WDS(SIZEOF_StgSmallMutArrPtrs) +
+                                     new_size));
+   StgSmallMutArrPtrs_ptrs(mba) = new_size;
+   // No need to call LDV_RECORD_CREATE. See Note [LDV profiling and resizing arrays]
+
+   return ();
 }
 
 // RRN: This one does not use the "ticketing" approach because it
@@ -257,6 +268,7 @@ stg_newArrayzh ( W_ n /* words */, gcptr init )
     }
     TICK_ALLOC_PRIM(SIZEOF_StgMutArrPtrs, WDS(size), 0);
 
+    /* No write barrier needed since this is a new allocation. */
     SET_HDR(arr, stg_MUT_ARR_PTRS_DIRTY_info, CCCS);
     StgMutArrPtrs_ptrs(arr) = n;
     StgMutArrPtrs_size(arr) = size;
@@ -349,8 +361,13 @@ stg_casArrayzh ( gcptr arr, W_ ind, gcptr old, gcptr new )
         // Compare and Swap Succeeded:
         SET_HDR(arr, stg_MUT_ARR_PTRS_DIRTY_info, CCCS);
         len = StgMutArrPtrs_ptrs(arr);
+
         // The write barrier.  We must write a byte into the mark table:
         I8[arr + SIZEOF_StgMutArrPtrs + WDS(len) + (ind >> MUT_ARR_PTRS_CARD_BITS )] = 1;
+
+        // Concurrent GC write barrier
+        updateRemembSetPushPtr(old);
+
         return (0,new);
     }
 }
@@ -403,18 +420,22 @@ stg_newSmallArrayzh ( W_ n /* words */, gcptr init )
 
     words = BYTES_TO_WDS(SIZEOF_StgSmallMutArrPtrs) + n;
     ("ptr" arr) = ccall allocateMightFail(MyCapability() "ptr",words);
-    if (arr == NULL) {
+    if (arr == NULL) (likely: False) {
         jump stg_raisezh(base_GHCziIOziException_heapOverflow_closure);
     }
     TICK_ALLOC_PRIM(SIZEOF_StgSmallMutArrPtrs, WDS(n), 0);
 
+    /* No write barrier needed since this is a new allocation. */
     SET_HDR(arr, stg_SMALL_MUT_ARR_PTRS_DIRTY_info, CCCS);
     StgSmallMutArrPtrs_ptrs(arr) = n;
 
     // Initialise all elements of the array with the value in R2
     p = arr + SIZEOF_StgSmallMutArrPtrs;
+    // Avoid the shift for `WDS(n)` in the inner loop
+    W_ limit;
+    limit = arr + SIZEOF_StgSmallMutArrPtrs + WDS(n);
   for:
-    if (p < arr + SIZEOF_StgSmallMutArrPtrs + WDS(n)) (likely: True) {
+    if (p < limit) (likely: True) {
         W_[p] = init;
         p = p + WDS(1);
         goto for;
@@ -458,16 +479,45 @@ stg_thawSmallArrayzh ( gcptr src, W_ offset, W_ n )
     cloneSmallArray(stg_SMALL_MUT_ARR_PTRS_DIRTY_info, src, offset, n)
 }
 
+// Concurrent GC write barrier for pointer array copies
+//
+// hdr_size in bytes. dst_off in words, n in words.
+stg_copyArray_barrier ( W_ hdr_size, gcptr dst, W_ dst_off, W_ n)
+{
+    W_ end, p;
+    ASSERT(n > 0);  // Assumes n==0 is handled by caller
+    p = dst + hdr_size + WDS(dst_off);
+    end = p + WDS(n);
+
+again:
+    IF_NONMOVING_WRITE_BARRIER_ENABLED {
+        ccall updateRemembSetPushClosure_(BaseReg "ptr", W_[p] "ptr");
+    }
+    p = p + WDS(1);
+    if (p < end) {
+        goto again;
+    }
+
+    return ();
+}
+
 stg_copySmallArrayzh ( gcptr src, W_ src_off, gcptr dst, W_ dst_off, W_ n)
 {
     W_ dst_p, src_p, bytes;
 
-    SET_INFO(dst, stg_SMALL_MUT_ARR_PTRS_DIRTY_info);
+    if (n > 0) {
+        IF_NONMOVING_WRITE_BARRIER_ENABLED {
+            call stg_copyArray_barrier(SIZEOF_StgSmallMutArrPtrs,
+                                      dst, dst_off, n);
+        }
 
-    dst_p = dst + SIZEOF_StgSmallMutArrPtrs + WDS(dst_off);
-    src_p = src + SIZEOF_StgSmallMutArrPtrs + WDS(src_off);
-    bytes = WDS(n);
-    prim %memcpy(dst_p, src_p, bytes, SIZEOF_W);
+        SET_INFO(dst, stg_SMALL_MUT_ARR_PTRS_DIRTY_info);
+
+        dst_p = dst + SIZEOF_StgSmallMutArrPtrs + WDS(dst_off);
+        src_p = src + SIZEOF_StgSmallMutArrPtrs + WDS(src_off);
+        bytes = WDS(n);
+        prim %memcpy(dst_p, src_p, bytes, SIZEOF_W);
+    }
 
     return ();
 }
@@ -476,15 +526,22 @@ stg_copySmallMutableArrayzh ( gcptr src, W_ src_off, gcptr dst, W_ dst_off, W_ n
 {
     W_ dst_p, src_p, bytes;
 
-    SET_INFO(dst, stg_SMALL_MUT_ARR_PTRS_DIRTY_info);
+    if (n > 0) {
+        IF_NONMOVING_WRITE_BARRIER_ENABLED {
+            call stg_copyArray_barrier(SIZEOF_StgSmallMutArrPtrs,
+                                      dst, dst_off, n);
+        }
 
-    dst_p = dst + SIZEOF_StgSmallMutArrPtrs + WDS(dst_off);
-    src_p = src + SIZEOF_StgSmallMutArrPtrs + WDS(src_off);
-    bytes = WDS(n);
-    if (src == dst) {
-        prim %memmove(dst_p, src_p, bytes, SIZEOF_W);
-    } else {
-        prim %memcpy(dst_p, src_p, bytes, SIZEOF_W);
+        SET_INFO(dst, stg_SMALL_MUT_ARR_PTRS_DIRTY_info);
+
+        dst_p = dst + SIZEOF_StgSmallMutArrPtrs + WDS(dst_off);
+        src_p = src + SIZEOF_StgSmallMutArrPtrs + WDS(src_off);
+        bytes = WDS(n);
+        if (src == dst) {
+            prim %memmove(dst_p, src_p, bytes, SIZEOF_W);
+        } else {
+            prim %memcpy(dst_p, src_p, bytes, SIZEOF_W);
+        }
     }
 
     return ();
@@ -506,6 +563,10 @@ stg_casSmallArrayzh ( gcptr arr, W_ ind, gcptr old, gcptr new )
     } else {
         // Compare and Swap Succeeded:
         SET_HDR(arr, stg_SMALL_MUT_ARR_PTRS_DIRTY_info, CCCS);
+
+        // Concurrent GC write barrier
+        updateRemembSetPushPtr(old);
+
         return (0,new);
     }
 }
@@ -522,6 +583,7 @@ stg_newMutVarzh ( gcptr init )
     ALLOC_PRIM_P (SIZEOF_StgMutVar, stg_newMutVarzh, init);
 
     mv = Hp - SIZEOF_StgMutVar + WDS(1);
+    /* No write barrier needed since this is a new allocation. */
     SET_HDR(mv,stg_MUT_VAR_DIRTY_info,CCCS);
     StgMutVar_var(mv) = init;
 
@@ -544,7 +606,7 @@ stg_casMutVarzh ( gcptr mv, gcptr old, gcptr new )
         return (1,h);
     } else {
         if (GET_INFO(mv) == stg_MUT_VAR_CLEAN_info) {
-            ccall dirty_MUT_VAR(BaseReg "ptr", mv "ptr");
+            ccall dirty_MUT_VAR(BaseReg "ptr", mv "ptr", old);
         }
         return (0,new);
     }
@@ -557,7 +619,7 @@ stg_casMutVarzh ( gcptr mv, gcptr old, gcptr new )
     } else {
         StgMutVar_var(mv) = new;
         if (GET_INFO(mv) == stg_MUT_VAR_CLEAN_info) {
-            ccall dirty_MUT_VAR(BaseReg "ptr", mv "ptr");
+            ccall dirty_MUT_VAR(BaseReg "ptr", mv "ptr", old);
         }
         return (0,new);
     }
@@ -624,11 +686,12 @@ stg_atomicModifyMutVar2zh ( gcptr mv, gcptr f )
     (h) = prim %cmpxchgW(mv + SIZEOF_StgHeader + OFFSET_StgMutVar_var, x, y);
     if (h != x) { goto retry; }
 #else
+    h = StgMutVar_var(mv);
     StgMutVar_var(mv) = y;
 #endif
 
     if (GET_INFO(mv) == stg_MUT_VAR_CLEAN_info) {
-        ccall dirty_MUT_VAR(BaseReg "ptr", mv "ptr");
+        ccall dirty_MUT_VAR(BaseReg "ptr", mv "ptr", h);
     }
 
     return (x,z);
@@ -700,6 +763,7 @@ stg_mkWeakzh ( gcptr key,
     ALLOC_PRIM (SIZEOF_StgWeak)
 
     w = Hp - SIZEOF_StgWeak + WDS(1);
+    // No memory barrier needed as this is a new allocation.
     SET_HDR(w, stg_WEAK_info, CCCS);
 
     StgWeak_key(w)         = key;
@@ -748,6 +812,9 @@ stg_addCFinalizzerToWeakzh ( W_ fptr,   // finalizer
         unlockClosure(w, info);
         return (0);
     }
+
+    // Write barrier for concurrent non-moving collector
+    updateRemembSetPushPtr(StgWeak_cfinalizers(w))
 
     StgCFinalizerList_link(c) = StgWeak_cfinalizers(w);
     StgWeak_cfinalizers(w) = c;
@@ -815,6 +882,7 @@ stg_deRefWeakzh ( gcptr w )
     gcptr val;
 
     info = GET_INFO(w);
+    prim_read_barrier;
 
     if (info == stg_WHITEHOLE_info) {
         // w is locked by another thread. Now it's not immediately clear if w is
@@ -828,6 +896,8 @@ stg_deRefWeakzh ( gcptr w )
     if (info == stg_WEAK_info) {
         code = 1;
         val = StgWeak_value(w);
+        // See Note [Concurrent read barrier on deRefWeak#] in NonMovingMark.c
+        updateRemembSetPushPtr(val);
     } else {
         code = 0;
         val = w;
@@ -920,7 +990,7 @@ stg_forkzh ( gcptr closure )
     gcptr threadid;
 
     ("ptr" threadid) = ccall createIOThread( MyCapability() "ptr",
-                                  RtsFlags_GcFlags_initialStkSize(RtsFlags),
+                                  TO_W_(RtsFlags_GcFlags_initialStkSize(RtsFlags)),
                                   closure "ptr");
 
     /* start blocked if the current thread is blocked */
@@ -945,7 +1015,7 @@ again: MAYBE_GC(again);
 
     ("ptr" threadid) = ccall createIOThread(
         MyCapability() "ptr",
-        RtsFlags_GcFlags_initialStkSize(RtsFlags),
+        TO_W_(RtsFlags_GcFlags_initialStkSize(RtsFlags)),
         closure "ptr");
 
     /* start blocked if the current thread is blocked */
@@ -1025,6 +1095,37 @@ stg_threadStatuszh ( gcptr tso )
  * TVar primitives
  * -------------------------------------------------------------------------- */
 
+stg_abort /* no arg list: explicit stack layout */
+{
+    W_ frame_type;
+    W_ frame;
+    W_ trec;
+    W_ outer;
+    W_ r;
+
+    // STM operations may allocate
+    MAYBE_GC_ (stg_abort); // NB. not MAYBE_GC(), we cannot make a
+                           // function call in an explicit-stack proc
+
+    // Find the enclosing ATOMICALLY_FRAME
+    SAVE_THREAD_STATE();
+    (frame_type) = ccall findAtomicallyFrameHelper(MyCapability(), CurrentTSO "ptr");
+    LOAD_THREAD_STATE();
+    frame = Sp;
+    trec = StgTSO_trec(CurrentTSO);
+    outer  = StgTRecHeader_enclosing_trec(trec);
+
+    // We've reached the ATOMICALLY_FRAME
+    ASSERT(frame_type == ATOMICALLY_FRAME);
+    ASSERT(outer == NO_TREC);
+
+    // Restart the transaction.
+    ("ptr" trec) = ccall stmStartTransaction(MyCapability() "ptr", outer "ptr");
+    StgTSO_trec(CurrentTSO) = trec;
+    Sp = frame;
+    R1 = StgAtomicallyFrame_code(frame);
+    jump stg_ap_v_fast [R1];
+}
 // Catch retry frame -----------------------------------------------------------
 
 #define CATCH_RETRY_FRAME_FIELDS(w_,p_,info_ptr,        \
@@ -1059,26 +1160,9 @@ INFO_TABLE_RET(stg_catch_retry_frame, CATCH_RETRY_FRAME,
         StgTSO_trec(CurrentTSO) = outer;
         return (ret);
     } else {
-        // Did not commit: re-execute
-        P_ new_trec;
-        ("ptr" new_trec) = ccall stmStartTransaction(MyCapability() "ptr",
-                                                           outer "ptr");
-        StgTSO_trec(CurrentTSO) = new_trec;
-        if (running_alt_code != 0) {
-            jump stg_ap_v_fast
-                (CATCH_RETRY_FRAME_FIELDS(,,info_ptr, p1, p2,
-                                          running_alt_code,
-                                          first_code,
-                                          alt_code))
-                (alt_code);
-        } else {
-            jump stg_ap_v_fast
-                (CATCH_RETRY_FRAME_FIELDS(,,info_ptr, p1, p2,
-                                          running_alt_code,
-                                          first_code,
-                                          alt_code))
-                (first_code);
-        }
+        // Did not commit: abort and restart.
+        StgTSO_trec(CurrentTSO) = outer;
+        jump stg_abort();
     }
 }
 
@@ -1101,10 +1185,9 @@ INFO_TABLE_RET(stg_atomically_frame, ATOMICALLY_FRAME,
     return (P_ result) // value returned to the frame
 {
     W_ valid;
-    gcptr trec, outer, q;
+    gcptr trec;
 
-    trec   = StgTSO_trec(CurrentTSO);
-    outer  = StgTRecHeader_enclosing_trec(trec);
+    trec = StgTSO_trec(CurrentTSO);
 
     /* Back at the atomically frame */
     frame_result = result;
@@ -1225,7 +1308,7 @@ stg_atomicallyzh (P_ stm)
     code = stm;
     frame_result = NO_TREC;
 
-    /* Start the memory transcation */
+    /* Start the memory transaction */
     ("ptr" new_trec) = ccall stmStartTransaction(MyCapability() "ptr", old_trec "ptr");
     StgTSO_trec(CurrentTSO) = new_trec;
 
@@ -1386,11 +1469,13 @@ stg_readTVarzh (P_ tvar)
 
 stg_readTVarIOzh ( P_ tvar /* :: TVar a */ )
 {
-    W_ result;
+    W_ result, resultinfo;
 
 again:
     result = StgTVar_current_value(tvar);
-    if (%INFO_PTR(result) == stg_TREC_HEADER_info) {
+    resultinfo = %INFO_PTR(result);
+    prim_read_barrier;
+    if (resultinfo == stg_TREC_HEADER_info) {
         goto again;
     }
     return (result);
@@ -1459,6 +1544,7 @@ stg_newMVarzh ()
     ALLOC_PRIM_ (SIZEOF_StgMVar, stg_newMVarzh);
 
     mvar = Hp - SIZEOF_StgMVar + WDS(1);
+    // No memory barrier needed as this is a new allocation.
     SET_HDR(mvar,stg_MVAR_DIRTY_info,CCCS);
         // MVARs start dirty: generation 0 has no mutable list
     StgMVar_head(mvar)  = stg_END_TSO_QUEUE_closure;
@@ -1483,7 +1569,7 @@ stg_newMVarzh ()
 
 stg_takeMVarzh ( P_ mvar /* :: MVar a */ )
 {
-    W_ val, info, tso, q;
+    W_ val, info, tso, q, qinfo;
 
     LOCK_CLOSURE(mvar, info);
 
@@ -1492,7 +1578,7 @@ stg_takeMVarzh ( P_ mvar /* :: MVar a */ )
      */
     if (StgMVar_value(mvar) == stg_END_TSO_QUEUE_closure) {
         if (info == stg_MVAR_CLEAN_info) {
-            ccall dirty_MVAR(BaseReg "ptr", mvar "ptr");
+            ccall dirty_MVAR(BaseReg "ptr", mvar "ptr", StgMVar_value(mvar) "ptr");
         }
 
         // We want to put the heap check down here in the slow path,
@@ -1505,9 +1591,12 @@ stg_takeMVarzh ( P_ mvar /* :: MVar a */ )
 
         q = Hp - SIZEOF_StgMVarTSOQueue + WDS(1);
 
-        SET_HDR(q, stg_MVAR_TSO_QUEUE_info, CCS_SYSTEM);
         StgMVarTSOQueue_link(q) = END_TSO_QUEUE;
         StgMVarTSOQueue_tso(q)  = CurrentTSO;
+        SET_HDR(q, stg_MVAR_TSO_QUEUE_info, CCS_SYSTEM);
+        // Write barrier before we make the new MVAR_TSO_QUEUE
+        // visible to other cores.
+        prim_write_barrier;
 
         if (StgMVar_head(mvar) == stg_END_TSO_QUEUE_closure) {
             StgMVar_head(mvar) = q;
@@ -1535,10 +1624,15 @@ loop:
         // If the MVar is not already dirty, then we don't need to make
         // it dirty, as it is empty with nothing blocking on it.
         unlockClosure(mvar, info);
+        // However, we do need to ensure that the nonmoving collector
+        // knows about the reference to the value that we just removed...
+        updateRemembSetPushPtr(val);
         return (val);
     }
-    if (StgHeader_info(q) == stg_IND_info ||
-        StgHeader_info(q) == stg_MSG_NULL_info) {
+    qinfo = StgHeader_info(q);
+    prim_read_barrier;
+    if (qinfo == stg_IND_info ||
+        qinfo == stg_MSG_NULL_info) {
         q = StgInd_indirectee(q);
         goto loop;
     }
@@ -1546,7 +1640,7 @@ loop:
     // There are putMVar(s) waiting... wake up the first thread on the queue
 
     if (info == stg_MVAR_CLEAN_info) {
-        ccall dirty_MVAR(BaseReg "ptr", mvar "ptr");
+        ccall dirty_MVAR(BaseReg "ptr", mvar "ptr", val "ptr");
     }
 
     tso = StgMVarTSOQueue_tso(q);
@@ -1576,7 +1670,7 @@ loop:
 
 stg_tryTakeMVarzh ( P_ mvar /* :: MVar a */ )
 {
-    W_ val, info, tso, q;
+    W_ val, info, tso, q, qinfo;
 
     LOCK_CLOSURE(mvar, info);
 
@@ -1603,8 +1697,11 @@ loop:
         return (1, val);
     }
 
-    if (StgHeader_info(q) == stg_IND_info ||
-        StgHeader_info(q) == stg_MSG_NULL_info) {
+    qinfo = StgHeader_info(q);
+    prim_read_barrier;
+
+    if (qinfo == stg_IND_info ||
+        qinfo == stg_MSG_NULL_info) {
         q = StgInd_indirectee(q);
         goto loop;
     }
@@ -1612,7 +1709,7 @@ loop:
     // There are putMVar(s) waiting... wake up the first thread on the queue
 
     if (info == stg_MVAR_CLEAN_info) {
-        ccall dirty_MVAR(BaseReg "ptr", mvar "ptr");
+        ccall dirty_MVAR(BaseReg "ptr", mvar "ptr", val "ptr");
     }
 
     tso = StgMVarTSOQueue_tso(q);
@@ -1643,14 +1740,14 @@ loop:
 stg_putMVarzh ( P_ mvar, /* :: MVar a */
                 P_ val,  /* :: a */ )
 {
-    W_ info, tso, q;
+    W_ info, tso, q, qinfo;
 
     LOCK_CLOSURE(mvar, info);
 
     if (StgMVar_value(mvar) != stg_END_TSO_QUEUE_closure) {
 
         if (info == stg_MVAR_CLEAN_info) {
-            ccall dirty_MVAR(BaseReg "ptr", mvar "ptr");
+            ccall dirty_MVAR(BaseReg "ptr", mvar "ptr", StgMVar_value(mvar) "ptr");
         }
 
         // We want to put the heap check down here in the slow path,
@@ -1663,9 +1760,11 @@ stg_putMVarzh ( P_ mvar, /* :: MVar a */
 
         q = Hp - SIZEOF_StgMVarTSOQueue + WDS(1);
 
-        SET_HDR(q, stg_MVAR_TSO_QUEUE_info, CCS_SYSTEM);
         StgMVarTSOQueue_link(q) = END_TSO_QUEUE;
         StgMVarTSOQueue_tso(q)  = CurrentTSO;
+
+        SET_HDR(q, stg_MVAR_TSO_QUEUE_info, CCS_SYSTEM);
+        prim_write_barrier;
 
         if (StgMVar_head(mvar) == stg_END_TSO_QUEUE_closure) {
             StgMVar_head(mvar) = q;
@@ -1682,19 +1781,29 @@ stg_putMVarzh ( P_ mvar, /* :: MVar a */
         jump stg_block_putmvar(mvar,val);
     }
 
+    // We are going to mutate the closure, make sure its current pointers
+    // are marked.
+    if (info == stg_MVAR_CLEAN_info) {
+        ccall update_MVAR(BaseReg "ptr", mvar "ptr", StgMVar_value(mvar) "ptr");
+    }
+
     q = StgMVar_head(mvar);
 loop:
     if (q == stg_END_TSO_QUEUE_closure) {
         /* No further takes, the MVar is now full. */
-        if (info == stg_MVAR_CLEAN_info) {
-            ccall dirty_MVAR(BaseReg "ptr", mvar "ptr");
-        }
         StgMVar_value(mvar) = val;
+        if (info == stg_MVAR_CLEAN_info) {
+            ccall dirty_MVAR(BaseReg "ptr", mvar "ptr", StgMVar_value(mvar) "ptr");
+        }
         unlockClosure(mvar, stg_MVAR_DIRTY_info);
         return ();
     }
-    if (StgHeader_info(q) == stg_IND_info ||
-        StgHeader_info(q) == stg_MSG_NULL_info) {
+
+    qinfo = StgHeader_info(q);
+    prim_read_barrier;
+
+    if (qinfo == stg_IND_info ||
+        qinfo == stg_MSG_NULL_info) {
         q = StgInd_indirectee(q);
         goto loop;
     }
@@ -1721,7 +1830,7 @@ loop:
     // indicate that the MVar operation has now completed.
     StgTSO__link(tso) = stg_END_TSO_QUEUE_closure;
 
-    if (TO_W_(StgStack_dirty(stack)) == 0) {
+    if ((TO_W_(StgStack_dirty(stack)) & STACK_DIRTY) == 0) {
         ccall dirty_STACK(MyCapability() "ptr", stack "ptr");
     }
 
@@ -1751,7 +1860,7 @@ loop:
 stg_tryPutMVarzh ( P_ mvar, /* :: MVar a */
                    P_ val,  /* :: a */ )
 {
-    W_ info, tso, q;
+    W_ info, tso, q, qinfo;
 
     LOCK_CLOSURE(mvar, info);
 
@@ -1767,15 +1876,19 @@ loop:
     if (q == stg_END_TSO_QUEUE_closure) {
         /* No further takes, the MVar is now full. */
         if (info == stg_MVAR_CLEAN_info) {
-            ccall dirty_MVAR(BaseReg "ptr", mvar "ptr");
+            ccall dirty_MVAR(BaseReg "ptr", mvar "ptr", StgMVar_value(mvar) "ptr");
         }
 
         StgMVar_value(mvar) = val;
         unlockClosure(mvar, stg_MVAR_DIRTY_info);
         return (1);
     }
-    if (StgHeader_info(q) == stg_IND_info ||
-        StgHeader_info(q) == stg_MSG_NULL_info) {
+
+    qinfo = StgHeader_info(q);
+    prim_read_barrier;
+
+    if (qinfo == stg_IND_info ||
+        qinfo == stg_MSG_NULL_info) {
         q = StgInd_indirectee(q);
         goto loop;
     }
@@ -1802,7 +1915,7 @@ loop:
     // indicate that the MVar operation has now completed.
     StgTSO__link(tso) = stg_END_TSO_QUEUE_closure;
 
-    if (TO_W_(StgStack_dirty(stack)) == 0) {
+    if ((TO_W_(StgStack_dirty(stack)) & STACK_DIRTY) == 0) {
         ccall dirty_STACK(MyCapability() "ptr", stack "ptr");
     }
 
@@ -1834,7 +1947,7 @@ stg_readMVarzh ( P_ mvar, /* :: MVar a */ )
     if (StgMVar_value(mvar) == stg_END_TSO_QUEUE_closure) {
 
         if (info == stg_MVAR_CLEAN_info) {
-            ccall dirty_MVAR(BaseReg "ptr", mvar "ptr");
+            ccall dirty_MVAR(BaseReg "ptr", mvar "ptr", StgMVar_value(mvar));
         }
 
         ALLOC_PRIM_WITH_CUSTOM_FAILURE
@@ -1846,9 +1959,11 @@ stg_readMVarzh ( P_ mvar, /* :: MVar a */ )
 
         // readMVars are pushed to the front of the queue, so
         // they get handled immediately
-        SET_HDR(q, stg_MVAR_TSO_QUEUE_info, CCS_SYSTEM);
         StgMVarTSOQueue_link(q) = StgMVar_head(mvar);
         StgMVarTSOQueue_tso(q)  = CurrentTSO;
+
+        SET_HDR(q, stg_MVAR_TSO_QUEUE_info, CCS_SYSTEM);
+        prim_write_barrier;
 
         StgTSO__link(CurrentTSO)       = q;
         StgTSO_block_info(CurrentTSO)  = mvar;
@@ -1893,16 +2008,31 @@ stg_makeStableNamezh ( P_ obj )
 {
     W_ index, sn_obj;
 
+    MAYBE_GC_P(stg_makeStableNamezh, obj);
+
     (index) = ccall lookupStableName(obj "ptr");
 
     /* Is there already a StableName for this heap object?
      *  stable_name_table is a pointer to an array of snEntry structs.
      */
     if ( snEntry_sn_obj(W_[stable_name_table] + index*SIZEOF_snEntry) == NULL ) {
-        ALLOC_PRIM (SIZEOF_StgStableName);
-        sn_obj = Hp - SIZEOF_StgStableName + WDS(1);
+        // At this point we have a snEntry, but it doesn't look as used to the
+        // GC yet because we don't have a StableName object for the sn_obj field
+        // (remember that sn_obj == NULL means the entry is free). So if we call
+        // GC here we end up skipping the snEntry in gcStableNameTable(). This
+        // caused #15906. Solution: use allocate(), which does not call GC.
+        //
+        // (Alternatively we could use a special value for the sn_obj field to
+        // indicate that the entry is being allocated and not free, but that's
+        // too complicated and doesn't buy us much. See D5342?id=18700.)
+        ("ptr" sn_obj) = ccall allocate(MyCapability() "ptr",
+                                        BYTES_TO_WDS(SIZEOF_StgStableName));
         SET_HDR(sn_obj, stg_STABLE_NAME_info, CCCS);
         StgStableName_sn(sn_obj) = index;
+        // This will make the StableName# object visible to other threads;
+        // be sure that its completely visible to other cores.
+        // See Note [Heap memory barriers] in SMP.h.
+        prim_write_barrier;
         snEntry_sn_obj(W_[stable_name_table] + index*SIZEOF_snEntry) = sn_obj;
     } else {
         sn_obj = snEntry_sn_obj(W_[stable_name_table] + index*SIZEOF_snEntry);
@@ -1944,6 +2074,7 @@ stg_newBCOzh ( P_ instrs,
     ALLOC_PRIM (bytes);
 
     bco = Hp - bytes + WDS(1);
+    // No memory barrier necessary as this is a new allocation.
     SET_HDR(bco, stg_BCO_info, CCS_MAIN);
 
     StgBCO_instrs(bco)     = instrs;
@@ -1970,7 +2101,7 @@ stg_mkApUpd0zh ( P_ bco )
     W_ ap;
 
     // This function is *only* used to wrap zero-arity BCOs in an
-    // updatable wrapper (see ByteCodeLink.hs).  An AP thunk is always
+    // updatable wrapper (see GHC.ByteCode.Linker).  An AP thunk is always
     // saturated and always points directly to a FUN or BCO.
     ASSERT(%INFO_TYPE(%GET_STD_INFO(bco)) == HALF_W_(BCO) &&
            StgBCO_arity(bco) == HALF_W_(0));
@@ -1980,6 +2111,7 @@ stg_mkApUpd0zh ( P_ bco )
     CCCS_ALLOC(SIZEOF_StgAP);
 
     ap = Hp - SIZEOF_StgAP + WDS(1);
+    // No memory barrier necessary as this is a new allocation.
     SET_HDR(ap, stg_AP_info, CCS_MAIN);
 
     StgAP_n_args(ap) = HALF_W_(0);
@@ -1992,6 +2124,7 @@ stg_unpackClosurezh ( P_ closure )
 {
     W_ info, ptrs, nptrs, p, ptrs_arr, dat_arr;
     info  = %GET_STD_INFO(UNTAG(closure));
+    prim_read_barrier;
 
     ptrs  = TO_W_(%INFO_PTRS(info));
     nptrs = TO_W_(%INFO_NPTRS(info));
@@ -2028,6 +2161,13 @@ for:
     ("ptr" ptrArray) = foreign "C" heap_view_closurePtrs(MyCapability() "ptr", clos "ptr");
 
     return (info, dat_arr, ptrArray);
+}
+
+stg_closureSizzezh (P_ clos)
+{
+    W_ len;
+    (len) = foreign "C" heap_view_closureSize(UNTAG(clos) "ptr");
+    return (len);
 }
 
 /* -----------------------------------------------------------------------------
@@ -2313,7 +2453,10 @@ stg_noDuplicatezh /* no arg list: explicit stack layout */
 
 stg_getApStackValzh ( P_ ap_stack, W_ offset )
 {
-   if (%INFO_PTR(UNTAG(ap_stack)) == stg_AP_STACK_info) {
+   W_ ap_stackinfo;
+   ap_stackinfo = %INFO_PTR(UNTAG(ap_stack));
+   prim_read_barrier;
+   if (ap_stackinfo == stg_AP_STACK_info) {
        return (1,StgAP_STACK_payload(ap_stack,offset));
    } else {
        return (0,ap_stack);
@@ -2383,7 +2526,7 @@ stg_traceEventzh ( W_ msg )
     // We should go through the macro HASKELLEVENT_USER_MSG_ENABLED from
     // RtsProbes.h, but that header file includes unistd.h, which doesn't
     // work in Cmm
-#if !defined(solaris2_TARGET_OS)
+#if !defined(solaris2_HOST_OS)
    (enabled) = ccall __dtrace_isenabled$HaskellEvent$user__msg$v1();
 #else
     // Solaris' DTrace can't handle the
@@ -2425,7 +2568,7 @@ stg_traceMarkerzh ( W_ msg )
 
     W_ enabled;
 
-#if !defined(solaris2_TARGET_OS)
+#if !defined(solaris2_HOST_OS)
     (enabled) = ccall __dtrace_isenabled$HaskellEvent$user__marker$v1();
 #else
     enabled = 1;
@@ -2452,9 +2595,25 @@ stg_setThreadAllocationCounterzh ( I64 counter )
     // Allocation in the current block will be subtracted by
     // getThreadAllocationCounter#, so we have to offset any existing
     // allocation here.  See also openNursery/closeNursery in
-    // compiler/codeGen/StgCmmForeign.hs.
+    // GHC.StgToCmm.Foreign.
     W_ offset;
     offset = Hp - bdescr_start(CurrentNursery);
     StgTSO_alloc_limit(CurrentTSO) = counter + TO_I64(offset);
     return ();
+}
+
+
+stg_raiseDivZZerozh ()
+{
+    jump stg_raisezh(base_GHCziExceptionziType_divZZeroException_closure);
+}
+
+stg_raiseUnderflowzh ()
+{
+    jump stg_raisezh(base_GHCziExceptionziType_underflowException_closure);
+}
+
+stg_raiseOverflowzh ()
+{
+    jump stg_raisezh(base_GHCziExceptionziType_overflowException_closure);
 }

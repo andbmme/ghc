@@ -23,9 +23,15 @@ import traceback
 # So we import it here first, so that the testsuite doesn't appear to fail.
 import subprocess
 
-from testutil import getStdout, Watcher
-from testglobals import getConfig, ghc_env, getTestRun, TestOptions, brokens
+from testutil import getStdout, Watcher, str_warn, str_info
+from testglobals import getConfig, ghc_env, getTestRun, TestConfig, \
+                        TestOptions, brokens, PerfMetric
+from my_typing import TestName
+from perf_notes import MetricChange, inside_git_repo, is_worktree_dirty, format_perf_stat
 from junit import junit
+import term_color
+from term_color import Color, colored
+import cpu_features
 
 # Readline sometimes spews out ANSI escapes for some values of TERM,
 # which result in test failures. Thus set TERM to a nice, simple, safe
@@ -37,17 +43,23 @@ global config
 config = getConfig() # get it from testglobals
 
 def signal_handler(signal, frame):
-        stopNow()
+    stopNow()
+
+def get_compiler_info() -> TestConfig:
+    """ Overriddden by configuration file. """
+    raise NotImplementedError
 
 # -----------------------------------------------------------------------------
 # cmd-line options
 
 parser = argparse.ArgumentParser(description="GHC's testsuite driver")
+perf_group = parser.add_mutually_exclusive_group()
 
 parser.add_argument("-e", action='append', help="A string to execute from the command line.")
 parser.add_argument("--config-file", action="append", help="config file")
 parser.add_argument("--config", action='append', help="config field")
 parser.add_argument("--rootdir", action='append', help="root of tree containing tests (default: .)")
+parser.add_argument("--metrics-file", help="file in which to save (append) the performance test metrics. If omitted, git notes will be used.")
 parser.add_argument("--summary-file", help="file in which to save the (human-readable) summary")
 parser.add_argument("--no-print-summary", action="store_true", help="should we print the summary?")
 parser.add_argument("--only", action="append", help="just this test (can be give multiple --only= flags)")
@@ -55,23 +67,38 @@ parser.add_argument("--way", action="append", help="just this way")
 parser.add_argument("--skipway", action="append", help="skip this way")
 parser.add_argument("--threads", type=int, help="threads to run simultaneously")
 parser.add_argument("--verbose", type=int, choices=[0,1,2,3,4,5], help="verbose (Values 0 through 5 accepted)")
-parser.add_argument("--skip-perf-tests", action="store_true", help="skip performance tests")
 parser.add_argument("--junit", type=argparse.FileType('wb'), help="output testsuite summary in JUnit format")
+parser.add_argument("--broken-test", action="append", default=[], help="a test name to mark as broken for this run")
+parser.add_argument("--test-env", default='local', help="Override default chosen test-env.")
+perf_group.add_argument("--skip-perf-tests", action="store_true", help="skip performance tests")
+perf_group.add_argument("--only-perf-tests", action="store_true", help="Only do performance tests")
 
 args = parser.parse_args()
 
-for e in args.e:
-    exec(e)
+# Initialize variables that are set by the build system with -e
+windows = False
+darwin = False
 
-for arg in args.config_file:
-    exec(open(arg).read())
+if args.e:
+    for e in args.e:
+        exec(e)
 
-for arg in args.config:
-    field, value = arg.split('=', 1)
-    setattr(config, field, value)
+if args.config_file:
+    for arg in args.config_file:
+        exec(open(arg).read())
+
+if args.config:
+    for arg in args.config:
+        field, value = arg.split('=', 1)
+        setattr(config, field, value)
 
 all_ways = config.run_ways+config.compile_ways+config.other_ways
-config.rootdirs = args.rootdir
+
+if args.rootdir:
+    config.rootdirs = args.rootdir
+
+config.metrics_file = args.metrics_file
+hasMetricsFile = config.metrics_file is not None
 config.summary_file = args.summary_file
 config.no_print_summary = args.no_print_summary
 
@@ -98,13 +125,24 @@ if args.skipway:
     config.run_ways = [w for w in config.run_ways if w not in args.skipway]
     config.compile_ways = [w for w in config.compile_ways if w not in args.skipway]
 
+config.broken_tests |= {TestName(t) for t in args.broken_test}
+
 if args.threads:
     config.threads = args.threads
     config.use_threads = True
 
 if args.verbose is not None:
     config.verbose = args.verbose
-config.skip_perf_tests = args.skip_perf_tests
+
+# Note force skip perf tests: skip if this is not a git repo (estimated with inside_git_repo)
+# and no metrics file is given. In this case there is no way to read the previous commit's
+# perf test results, nor a way to store new perf test results.
+forceSkipPerfTests = not hasMetricsFile and not inside_git_repo()
+config.skip_perf_tests = args.skip_perf_tests or forceSkipPerfTests
+config.only_perf_tests = args.only_perf_tests
+
+if args.test_env:
+    config.test_env = args.test_env
 
 config.cygwin = False
 config.msys = False
@@ -127,7 +165,7 @@ if windows:
     import ctypes
     # Windows and mingw* Python provide windll, msys2 python provides cdll.
     if hasattr(ctypes, 'WinDLL'):
-        mydll = ctypes.WinDLL
+        mydll = ctypes.WinDLL    # type: ignore
     else:
         mydll = ctypes.CDLL
 
@@ -165,6 +203,24 @@ else:
             else:
                 print('WARNING: No UTF8 locale found.')
                 print('You may get some spurious test failures.')
+
+# https://stackoverflow.com/a/22254892/1308058
+def supports_colors():
+    """
+    Returns True if the running system's terminal supports color, and False
+    otherwise.
+    """
+    plat = sys.platform
+    supported_platform = plat != 'Pocket PC' and (plat != 'win32' or
+                                                  'ANSICON' in os.environ)
+    # isatty is not always implemented, #6223.
+    is_a_tty = hasattr(sys.stdout, 'isatty') and sys.stdout.isatty()
+    if not supported_platform or not is_a_tty:
+        return False
+    return True
+
+config.supports_colors = supports_colors()
+term_color.enable_color = config.supports_colors
 
 # This has to come after arg parsing as the args can change the compiler
 get_compiler_info()
@@ -222,6 +278,17 @@ if config.timeout == -1:
     config.timeout = int(read_no_crs(config.top + '/timeout/calibrate.out'))
 
 print('Timeout is ' + str(config.timeout))
+print('Known ways: ' + ', '.join(config.other_ways))
+print('Run ways: ' + ', '.join(config.run_ways))
+print('Compile ways: ' + ', '.join(config.compile_ways))
+
+# Try get allowed performance changes from the git commit.
+try:
+    config.allowed_perf_changes = Perf.get_allowed_perf_changes()
+except subprocess.CalledProcessError:
+    print('Failed to get allowed metric changes from the HEAD git commit message.')
+
+print('Allowing performance changes in: ' + ', '.join(config.allowed_perf_changes.keys()))
 
 # -----------------------------------------------------------------------------
 # The main dude
@@ -233,12 +300,18 @@ t_files = list(findTFiles(config.rootdirs))
 
 print('Found', len(t_files), '.T files...')
 
-t = getTestRun()
+t = getTestRun() # type: TestRun
 
 # Avoid cmd.exe built-in 'date' command on Windows
-t.start_time = time.localtime()
+t.start_time = datetime.datetime.now()
 
-print('Beginning test run at', time.strftime("%c %Z",t.start_time))
+print('Beginning test run at', t.start_time.strftime("%c %Z"))
+
+# For reference
+try:
+    print('Detected CPU features: ', cpu_features.get_cpu_features())
+except Exception as e:
+    print('Failed to detect CPU features: ', e)
 
 sys.stdout.flush()
 # we output text, which cannot be unbuffered
@@ -265,6 +338,26 @@ def cleanup_and_exit(exitcode):
         shutil.rmtree(tempdir, ignore_errors=True)
     exit(exitcode)
 
+def tabulate_metrics(metrics: List[PerfMetric]) -> None:
+    for metric in sorted(metrics, key=lambda m: (m.stat.test, m.stat.way, m.stat.metric)):
+        print("{test:24}  {metric:40}  {value:15.3f}".format(
+            test = "{}({})".format(metric.stat.test, metric.stat.way),
+            metric = metric.stat.metric,
+            value = metric.stat.value
+        ))
+        if metric.baseline is not None:
+            val0 = metric.baseline.perfStat.value
+            val1 = metric.stat.value
+            rel = 100 * (val1 - val0) / val0
+            print("{space:24}  {herald:40}  {value:15.3f}  [{direction}, {rel:2.1f}%]".format(
+                space = "",
+                herald = "(baseline @ HEAD~{depth})".format(
+                    depth = metric.baseline.commitDepth),
+                value = val0,
+                direction = metric.change,
+                rel = rel
+            ))
+
 # First collect all the tests to be run
 t_files_ok = True
 for file in t_files:
@@ -277,13 +370,13 @@ for file in t_files:
         exec(src)
     except Exception as e:
         traceback.print_exc()
-        framework_fail(file, '', str(e))
+        framework_fail(None, None, 'exception: %s' % e)
         t_files_ok = False
 
 for name in config.only:
     if t_files_ok:
         # See Note [Mutating config.only]
-        framework_fail(name, '', 'test not found')
+        framework_fail(name, None, 'test not found')
     else:
         # Let user fix .T file errors before reporting on unfound tests.
         # The reason the test can not be found is likely because of those
@@ -293,7 +386,8 @@ for name in config.only:
 if config.list_broken:
     print('')
     print('Broken tests:')
-    print(' '.join(map (lambda bdn: '#' + str(bdn[0]) + '(' + bdn[1] + '/' + bdn[2] + ')', brokens)))
+    print('\n  '.join('#{ticket}({a}/{b})'.format(ticket=ticket, a=a, b=b)
+                      for ticket, a, b in brokens))
     print('')
 
     if t.framework_failures:
@@ -326,17 +420,88 @@ else:
     # flush everything before we continue
     sys.stdout.flush()
 
-    summary(t, sys.stdout, config.no_print_summary)
+    # Dump metrics data.
+    print("\nPerformance Metrics (test environment: {}):\n".format(config.test_env))
+    if any(t.metrics):
+        tabulate_metrics(t.metrics)
+    else:
+        print("\nNone collected.")
+    print("")
 
+    # Warn if had to force skip perf tests (see Note force skip perf tests).
+    spacing = "       "
+    if forceSkipPerfTests and not args.skip_perf_tests:
+        print()
+        print(str_warn('Skipping All Performance Tests') + ' `git` exited with non-zero exit code.')
+        print(spacing + 'Git is required because performance test results are compared with ancestor git commits\' results (stored with git notes).')
+        print(spacing + 'You can still run the tests without git by specifying an output file with --metrics-file FILE.')
+
+    # Warn of new metrics.
+    new_metrics = [metric for (change, metric, baseline) in t.metrics if change == MetricChange.NewMetric]
+    if any(new_metrics):
+        if inside_git_repo():
+            reason = 'a baseline (expected value) cannot be recovered from' + \
+                ' previous git commits. This may be due to HEAD having' + \
+                ' new tests or having expected changes, the presence of' + \
+                ' expected changes since the last run of the tests, and/or' + \
+                ' the latest test run being too old.'
+            fix = 'If the tests exist on the previous' + \
+                ' commit (And are configured to run with the same ways),' + \
+                ' then check out that commit and run the tests to generate' + \
+                ' the missing metrics. Alternatively, a baseline may be' + \
+                ' recovered from ci results once fetched:\n\n' + \
+                spacing + 'git fetch ' + \
+                  'https://gitlab.haskell.org/ghc/ghc-performance-notes.git' + \
+                  ' refs/notes/perf:refs/notes/' + Perf.CiNamespace
+        else:
+            reason = "this is not a git repo so the previous git commit's" + \
+                     " metrics cannot be loaded from git notes:"
+            fix = ""
+        print()
+        print(str_warn('Missing Baseline Metrics') + \
+                ' these metrics trivially pass because ' + reason)
+        print(spacing + (' ').join(set([metric.test for metric in new_metrics])))
+        if fix != "":
+            print()
+            print(fix)
+
+    # Inform of how to accept metric changes.
+    if (len(t.unexpected_stat_failures) > 0):
+        print()
+        print(str_info("Some stats have changed") + " If this is expected, " + \
+            "allow changes by appending the git commit message with this:")
+        print('-' * 25)
+        print(Perf.allow_changes_string([(m.change, m.stat) for m in t.metrics]))
+        print('-' * 25)
+
+    summary(t, sys.stdout, config.no_print_summary, config.supports_colors)
+
+    # Write perf stats if any exist or if a metrics file is specified.
+    stats = [stat for (_, stat, __) in t.metrics]
+    if hasMetricsFile:
+        print('Appending ' + str(len(stats)) + ' stats to file: ' + config.metrics_file)
+        with open(config.metrics_file, 'a') as f:
+            f.write("\n" + Perf.format_perf_stat(stats))
+    elif inside_git_repo() and any(stats):
+        if is_worktree_dirty():
+            print()
+            print(str_warn('Performance Metrics NOT Saved') + \
+                ' working tree is dirty. Commit changes or use ' + \
+                '--metrics-file to save metrics to a file.')
+        else:
+            Perf.append_perf_stat(stats)
+
+    # Write summary
     if config.summary_file:
-        with open(config.summary_file, 'w') as file:
-            summary(t, file)
+        with open(config.summary_file, 'w') as f:
+            summary(t, f)
 
     if args.junit:
         junit(t).write(args.junit)
 
 if len(t.unexpected_failures) > 0 or \
    len(t.unexpected_stat_failures) > 0 or \
+   len(t.unexpected_passes) > 0 or \
    len(t.framework_failures) > 0:
     exitcode = 1
 else:

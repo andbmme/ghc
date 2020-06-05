@@ -7,7 +7,7 @@
  * Documentation on the architecture of the Garbage Collector can be
  * found in the online commentary:
  *
- *   http://ghc.haskell.org/trac/ghc/wiki/Commentary/Rts/Storage/GC
+ *   https://gitlab.haskell.org/ghc/ghc/wikis/commentary/rts/storage/gc
  *
  * ---------------------------------------------------------------------------*/
 
@@ -77,15 +77,9 @@
 typedef enum { WeakPtrs, WeakThreads, WeakDone } WeakStage;
 static WeakStage weak_stage;
 
-// List of weak pointers whose key is dead
-StgWeak *dead_weak_ptr_list;
-
-// List of threads found to be unreachable
-StgTSO *resurrected_threads;
-
-static void    collectDeadWeakPtrs (generation *gen);
+static void    collectDeadWeakPtrs (generation *gen, StgWeak **dead_weak_ptr_list);
 static bool tidyWeakList (generation *gen);
-static bool resurrectUnreachableThreads (generation *gen);
+static bool resurrectUnreachableThreads (generation *gen, StgTSO **resurrected_threads);
 static void    tidyThreadList (generation *gen);
 
 void
@@ -100,12 +94,10 @@ initWeakForGC(void)
     }
 
     weak_stage = WeakThreads;
-    dead_weak_ptr_list = NULL;
-    resurrected_threads = END_TSO_QUEUE;
 }
 
 bool
-traverseWeakPtrList(void)
+traverseWeakPtrList(StgWeak **dead_weak_ptr_list, StgTSO **resurrected_threads)
 {
   bool flag = false;
 
@@ -140,7 +132,7 @@ traverseWeakPtrList(void)
 
       // Resurrect any threads which were unreachable
       for (g = 0; g <= N; g++) {
-          if (resurrectUnreachableThreads(&generations[g])) {
+          if (resurrectUnreachableThreads(&generations[g], resurrected_threads)) {
               flag = true;
           }
       }
@@ -155,7 +147,7 @@ traverseWeakPtrList(void)
 
       // otherwise, fall through...
   }
-  /* fallthrough */
+  FALLTHROUGH;
 
   case WeakPtrs:
   {
@@ -175,7 +167,7 @@ traverseWeakPtrList(void)
        */
       if (flag == false) {
           for (g = 0; g <= N; g++) {
-              collectDeadWeakPtrs(&generations[g]);
+              collectDeadWeakPtrs(&generations[g], dead_weak_ptr_list);
           }
 
           weak_stage = WeakDone;  // *now* we're done,
@@ -190,7 +182,7 @@ traverseWeakPtrList(void)
   }
 }
 
-static void collectDeadWeakPtrs (generation *gen)
+static void collectDeadWeakPtrs (generation *gen, StgWeak **dead_weak_ptr_list)
 {
     StgWeak *w, *next_w;
     for (w = gen->old_weak_ptr_list; w != NULL; w = next_w) {
@@ -201,12 +193,12 @@ static void collectDeadWeakPtrs (generation *gen)
         }
         evacuate(&w->finalizer);
         next_w = w->link;
-        w->link = dead_weak_ptr_list;
-        dead_weak_ptr_list = w;
+        w->link = *dead_weak_ptr_list;
+        *dead_weak_ptr_list = w;
     }
 }
 
-static bool resurrectUnreachableThreads (generation *gen)
+static bool resurrectUnreachableThreads (generation *gen, StgTSO **resurrected_threads)
 {
     StgTSO *t, *tmp, *next;
     bool flag = false;
@@ -221,15 +213,23 @@ static bool resurrectUnreachableThreads (generation *gen)
         switch (t->what_next) {
         case ThreadKilled:
         case ThreadComplete:
+            // The thread was unreachable so far, but it might still end up
+            // being reachable later, e.g. after collectDeadWeakPtrs(). We don't
+            // want the global_link field to be dangling in that case, so reset
+            // it to END_TSO_QUEUE. The copying GC doesn't currently care, but
+            // the compacting GC does, see #17785.
+            t->global_link = END_TSO_QUEUE;
             continue;
         default:
             tmp = t;
             evacuate((StgClosure **)&tmp);
-            tmp->global_link = resurrected_threads;
-            resurrected_threads = tmp;
+            tmp->global_link = *resurrected_threads;
+            *resurrected_threads = tmp;
             flag = true;
         }
     }
+
+    gen->old_threads = END_TSO_QUEUE;
     return flag;
 }
 
@@ -242,16 +242,22 @@ static bool tidyWeakList(generation *gen)
     last_w = &gen->old_weak_ptr_list;
     for (w = gen->old_weak_ptr_list; w != NULL; w = next_w) {
 
+        info = w->header.info;
+        /* N.B. This function is executed only during the serial part of GC
+         * so consequently there is no potential for data races and therefore
+         * no need for memory barriers.
+         */
+
         /* There might be a DEAD_WEAK on the list if finalizeWeak# was
          * called on a live weak pointer object.  Just remove it.
          */
-        if (w->header.info == &stg_DEAD_WEAK_info) {
+        if (info == &stg_DEAD_WEAK_info) {
             next_w = w->link;
             *last_w = next_w;
             continue;
         }
 
-        info = get_itbl((StgClosure *)w);
+        info = INFO_PTR_TO_STRUCT(info);
         switch (info->type) {
 
         case WEAK:

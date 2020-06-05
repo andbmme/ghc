@@ -1,7 +1,7 @@
 # safeLanguage tests are all about making sure the correct
 # unsafe language extensions are disabled or restricted
 # in the -XSafe language. Basically testing that -XSafe
-# works correctly (incluidng testing safe imports a little).
+# works correctly (including testing safe imports a little).
 
 # Just do the normal way, SafeHaskell is all in the frontend
 def f( name, opts ):
@@ -35,7 +35,5 @@ test('SafeLang18', normal, compile, [''])
 
 # Test building a package, that trust values are set correctly
 # and can be changed correctly
-#test('SafeRecomp01',
-#		normal,
-#      run_command, ['$MAKE -s --no-print-directory safeRecomp01'])
+#test('SafeRecomp01', normal, makefile_test, [])
 

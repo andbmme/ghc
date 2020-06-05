@@ -57,7 +57,9 @@ runAllCFinalizers(StgWeak *list)
         // If there's no major GC between the time that the finalizer for the
         // object from the oldest generation is manually called and shutdown
         // we end up running the same finalizer twice. See #7170.
-        if (w->header.info != &stg_DEAD_WEAK_info) {
+        const StgInfoTable *winfo = w->header.info;
+        load_load_barrier();
+        if (winfo != &stg_DEAD_WEAK_info) {
             runCFinalizers((StgCFinalizerList *)w->cfinalizers);
         }
     }
@@ -91,9 +93,19 @@ scheduleFinalizers(Capability *cap, StgWeak *list)
     StgWord size;
     uint32_t n, i;
 
-    ASSERT(n_finalizers == 0);
+    // This assertion does not hold with non-moving collection because
+    // non-moving collector does not wait for the list to be consumed (by
+    // doIdleGcWork()) before appending the list with more finalizers.
+    ASSERT(RtsFlags.GcFlags.useNonmoving || n_finalizers == 0);
 
-    finalizer_list = list;
+    // Append finalizer_list with the new list. TODO: Perhaps cache tail of the
+    // list for faster append. NOTE: We can't append `list` here! Otherwise we
+    // end up traversing already visited weaks in the loops below.
+    StgWeak **tl = &finalizer_list;
+    while (*tl) {
+        tl = &(*tl)->link;
+    }
+    *tl = list;
 
     // Traverse the list and
     //  * count the number of Haskell finalizers
@@ -128,7 +140,7 @@ scheduleFinalizers(Capability *cap, StgWeak *list)
         SET_HDR(w, &stg_DEAD_WEAK_info, w->header.prof.ccs);
     }
 
-    n_finalizers = i;
+    n_finalizers += i;
 
     // No Haskell finalizers to run?
     if (n == 0) return;
@@ -138,6 +150,7 @@ scheduleFinalizers(Capability *cap, StgWeak *list)
     size = n + mutArrPtrsCardTableSize(n);
     arr = (StgMutArrPtrs *)allocate(cap, sizeofW(StgMutArrPtrs) + size);
     TICK_ALLOC_PRIM(sizeofW(StgMutArrPtrs), n, 0);
+    // No write barrier needed here; this array is only going to referred to by this core.
     SET_HDR(arr, &stg_MUT_ARR_PTRS_FROZEN_CLEAN_info, CCS_SYSTEM);
     arr->ptrs = n;
     arr->size = size;

@@ -2,9 +2,9 @@
 
 module Simple.Plugin(plugin) where
 
-import UniqFM
-import GhcPlugins
-import qualified ErrUtils
+import GHC.Types.Unique.FM
+import GHC.Plugins
+import qualified GHC.Utils.Error
 
 -- For annotation tests
 import Simple.DataStructures
@@ -46,7 +46,7 @@ findNameBndr target b
 mainPass :: ModGuts -> CoreM ModGuts
 mainPass guts = do
     putMsgS "Simple Plugin Pass Run"
-    anns <- getAnnotations deserializeWithData guts
+    (_, anns) <- getAnnotations deserializeWithData guts
     bindsOnlyPass (mapM (changeBind anns Nothing)) guts
 
 changeBind :: UniqFM [ReplaceWith] -> Maybe String -> CoreBind -> CoreM CoreBind
@@ -67,11 +67,11 @@ changeBindPr anns mb_replacement b e = do
 
 changeExpr :: UniqFM [ReplaceWith] -> Maybe String -> CoreExpr -> CoreM CoreExpr
 changeExpr anns mb_replacement e = let go = changeExpr anns mb_replacement in case e of
-        Lit (MachStr _) -> case mb_replacement of
+        Lit (LitString _) -> case mb_replacement of
                 Nothing -> return e
                 Just replacement -> do
                         putMsgS "Performing Replacement"
-                        return $ Lit (MachStr (fastStringToByteString (mkFastString replacement)))
+                        return $ Lit (LitString (bytesFS (mkFastString replacement)))
         App e1 e2 -> liftM2 App (go e1) (go e2)
         Lam b e -> liftM (Lam b) (go e)
         Let bind e -> liftM2 Let (changeBind anns mb_replacement bind) (go e)

@@ -10,7 +10,8 @@
 -- We believe we could deorphan this module, by moving lots of things
 -- around, but we haven't got there yet:
 {-# OPTIONS_GHC -Wno-orphans #-}
-{-# OPTIONS_HADDOCK hide #-}
+{-# OPTIONS_HADDOCK not-home #-}
+{-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
 
 -----------------------------------------------------------------------------
 -- |
@@ -65,12 +66,13 @@ infixr 8  **
 
 -- | Trigonometric and hyperbolic functions and related functions.
 --
--- The Haskell Report defines no laws for 'Floating'. However, '(+)', '(*)'
+-- The Haskell Report defines no laws for 'Floating'. However, @('+')@, @('*')@
 -- and 'exp' are customarily expected to define an exponential field and have
 -- the following properties:
 --
--- * @exp (a + b)@ = @exp a * exp b
+-- * @exp (a + b)@ = @exp a * exp b@
 -- * @exp (fromInteger 0)@ = @fromInteger 1@
+--
 class  (Fractional a) => Floating a  where
     pi                  :: a
     exp, log, sqrt      :: a -> a
@@ -228,7 +230,7 @@ class  (RealFrac a, Floating a) => RealFloat a  where
                                  -- to wrong results, hence we clamp the
                                  -- scaling parameter.
                                  -- If n + k would be larger than h,
-                                 -- n + clamp b k must be too, simliar
+                                 -- n + clamp b k must be too, similar
                                  -- for smaller than l - d.
                                  -- Add a little extra to keep clear
                                  -- from the boundary cases.
@@ -1139,13 +1141,16 @@ geFloat     (F# x) (F# y) = isTrue# (geFloat# x y)
 ltFloat     (F# x) (F# y) = isTrue# (ltFloat# x y)
 leFloat     (F# x) (F# y) = isTrue# (leFloat# x y)
 
-expFloat, logFloat, sqrtFloat, fabsFloat :: Float -> Float
+expFloat, expm1Float :: Float -> Float
+logFloat, log1pFloat, sqrtFloat, fabsFloat :: Float -> Float
 sinFloat, cosFloat, tanFloat  :: Float -> Float
 asinFloat, acosFloat, atanFloat  :: Float -> Float
 sinhFloat, coshFloat, tanhFloat  :: Float -> Float
 asinhFloat, acoshFloat, atanhFloat  :: Float -> Float
 expFloat    (F# x) = F# (expFloat# x)
+expm1Float  (F# x) = F# (expm1Float# x)
 logFloat    (F# x) = F# (logFloat# x)
+log1pFloat  (F# x) = F# (log1pFloat# x)
 sqrtFloat   (F# x) = F# (sqrtFloat# x)
 fabsFloat   (F# x) = F# (fabsFloat# x)
 sinFloat    (F# x) = F# (sinFloat# x)
@@ -1188,13 +1193,16 @@ double2Float (D# x) = F# (double2Float# x)
 float2Double :: Float -> Double
 float2Double (F# x) = D# (float2Double# x)
 
-expDouble, logDouble, sqrtDouble, fabsDouble :: Double -> Double
+expDouble, expm1Double :: Double -> Double
+logDouble, log1pDouble, sqrtDouble, fabsDouble :: Double -> Double
 sinDouble, cosDouble, tanDouble  :: Double -> Double
 asinDouble, acosDouble, atanDouble  :: Double -> Double
 sinhDouble, coshDouble, tanhDouble  :: Double -> Double
 asinhDouble, acoshDouble, atanhDouble  :: Double -> Double
 expDouble    (D# x) = D# (expDouble# x)
+expm1Double  (D# x) = D# (expm1Double# x)
 logDouble    (D# x) = D# (logDouble# x)
+log1pDouble  (D# x) = D# (log1pDouble# x)
 sqrtDouble   (D# x) = D# (sqrtDouble# x)
 fabsDouble   (D# x) = D# (fabsDouble# x)
 sinDouble    (D# x) = D# (sinDouble# x)
@@ -1225,16 +1233,6 @@ foreign import ccall unsafe "isDoubleDenormalized" isDoubleDenormalized :: Doubl
 foreign import ccall unsafe "isDoubleNegativeZero" isDoubleNegativeZero :: Double -> Int
 foreign import ccall unsafe "isDoubleFinite" isDoubleFinite :: Double -> Int
 
-
-------------------------------------------------------------------------
--- libm imports for extended floating
-------------------------------------------------------------------------
-foreign import capi unsafe "math.h log1p" log1pDouble :: Double -> Double
-foreign import capi unsafe "math.h expm1" expm1Double :: Double -> Double
-foreign import capi unsafe "math.h log1pf" log1pFloat :: Float -> Float
-foreign import capi unsafe "math.h expm1f" expm1Float :: Float -> Float
-
-
 ------------------------------------------------------------------------
 -- Coercion rules
 ------------------------------------------------------------------------
@@ -1261,7 +1259,7 @@ word2Float (W# w) = F# (word2Float# w)
 {-
 Note [realToFrac int-to-float]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Don found that the RULES for realToFrac/Int->Double and simliarly
+Don found that the RULES for realToFrac/Int->Double and similarly
 Float made a huge difference to some stream-fusion programs.  Here's
 an example
 
@@ -1293,7 +1291,7 @@ And with the rule:
 The running time of the program goes from 120 seconds to 0.198 seconds
 with the native backend, and 0.143 seconds with the C backend.
 
-A few more details in Trac #2251, and the patch message
+A few more details in #2251, and the patch message
 "Add RULES for realToFrac from Int".
 -}
 
@@ -1323,7 +1321,7 @@ clamp bd k = max (-bd) (min bd k)
 Note [Casting from integral to floating point types]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 To implement something like `reinterpret_cast` from C++ to go from a
-floating-point type to an integral type one might niavely think that the
+floating-point type to an integral type one might naively think that the
 following should work:
 
       cast :: Float -> Word32
@@ -1386,7 +1384,7 @@ foreign import prim "stg_word64ToDoublezh"
 #endif
 
 
--- | @'castFloatToWord32' f@ does a bit-for-bit copy from a floating-point value
+-- | @'castFloatToWord64' f@ does a bit-for-bit copy from a floating-point value
 -- to an integral value.
 --
 -- @since 4.10.0.0

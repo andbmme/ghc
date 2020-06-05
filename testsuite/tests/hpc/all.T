@@ -3,7 +3,7 @@ test('T10138', [extra_files(['.keepme.hpc.T10138/']),
      # Using --hpcdir with an absolute path should work (exit code 0).
      ['{hpc} report T10138.keepme.tix --hpcdir="`pwd`/.keepme.hpc.T10138"'])
 
-test('T11798', normal, run_command, ['$MAKE -s --no-print-directory T11798'])
+test('T11798', normal, makefile_test, [])
 
 # Run tests below only for the hpc way.
 #
@@ -21,3 +21,6 @@ test('T2991', [cmd_wrapper(T2991), extra_clean(['T2991LiterateModule.hi',
                                                 'T2991LiterateModule.o'])],
               # Run with 'ghc --main'. Do not list other modules explicitly.
               multimod_compile_and_run, ['T2991', ''])
+
+test('T17073', when(opsys('mingw32'), expect_broken(17607)),
+     makefile_test, ['T17073 HPC={hpc}'])

@@ -6,8 +6,7 @@ test('heapprof002',
       extra_run_opts('7')],
      compile_and_run, [''])
 
-test('T11489', [req_profiling], run_command,
-     ['$MAKE -s --no-print-directory T11489'])
+test('T11489', [req_profiling], makefile_test, ['T11489'])
 
 # Below this line, run tests only with profiling ways.
 setTestOpts(req_profiling)
@@ -23,7 +22,9 @@ expect_broken_for_10037 = expect_broken_for(
      # e.g. prof and profllvm
 
 test('heapprof001',
-     [when(have_profiling(), extra_ways(extra_prof_ways)), extra_run_opts('7')],
+     [when(have_profiling(), extra_ways(extra_prof_ways)),
+      fragile(15382),
+      extra_run_opts('7')],
      compile_and_run, [''])
 
 test('T2592',
@@ -57,7 +58,7 @@ test('T5654b-O0', [only_ways(['prof'])], compile_and_run, [''])
 
 test('T5654b-O1', [only_ways(['profasm'])], compile_and_run, [''])
 
-test('scc005', [], compile_and_run, [''])
+test('scc005', [], compile_and_run, ['-fno-worker-wrapper'])
 
 test('T5314', [extra_ways(extra_prof_ways)], compile_and_run, [''])
 
@@ -86,7 +87,7 @@ test('prof-doc-fib', [], compile_and_run, [''])
 test('prof-doc-last', [], compile_and_run, ['-fno-full-laziness'])
 
 # unicode in cost centre names
-test('T5559', [], compile_and_run, [''])
+test('T5559', fragile(16350), compile_and_run, [''])
 
 # Note [consistent stacks]
 #  Certain optimisations can change the stacks we get out of the
@@ -113,18 +114,17 @@ test('T5363', [], compile_and_run, [''])
 
 test('profinline001', [], compile_and_run, [''])
 
-# Skip T11627a and T11627b on Darwin as it tends to give us a very small stack
-# which the retainer profiler tends to overflow. See #15287 and #11627.
-test('T11627a', [ extra_ways(extra_prof_ways)
-                , when(opsys('darwin'), skip)
+test('T11627a', [ extra_ways(extra_prof_ways),
+                  # integer-simple has an extremely large representation and
+                  # consequently needs significantly more time
+                  when(have_library('integer-simple'), skip)
                 ],
      compile_and_run, [''])
 
 test('T11627b', [ extra_run_opts('+RTS -i0 -RTS')  # census after each GC
                 , extra_ways(extra_prof_ways)
                 , when(opsys('darwin'), skip)
-                , when(opsys('mingw32'),
-                       expect_broken_for(12236, ['prof_hc_hb']))
+                , when(opsys('mingw32'), fragile_for(12236, ['prof_hc_hb']))
                 ]
                 , compile_and_run
                 , [''])
@@ -142,4 +142,12 @@ test('toplevel_scc_1',
 
 test('T12962', [], compile_and_run, [''])
 
-test('T14257', [], run_command, ['$MAKE -s --no-print-directory T14257'])
+test('T14257', [], makefile_test, ['T14257'])
+
+test('T15897',
+     [extra_ways(['profasm']), only_ways(['profasm']),
+      run_timeout_multiplier(2),
+      fragile(15467)],
+     makefile_test, ['T15897'])
+
+test('T17572', [], compile_and_run, [''])

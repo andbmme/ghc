@@ -13,9 +13,13 @@ cwd = os.getcwd()
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--validate', action='store_true', help='Run in validate mode')
-parser.add_argument('--required-tag', type=str, action='append', default=set())
 parser.add_argument('--hadrian', action='store_true', help='Do not assume the make base build system')
 args = parser.parse_args()
+
+# Packages whose libraries aren't in the submodule root
+EXCEPTIONS = {
+    'libraries/containers/': 'libraries/containers/containers/'
+}
 
 def print_err(s):
     print(dedent(s), file=sys.stderr)
@@ -24,67 +28,32 @@ def die(mesg):
     print_err(mesg)
     sys.exit(1)
 
-def check_for_url_rewrites():
-    if os.path.isdir('.git') and \
-       subprocess.check_output('git config remote.origin.url'.split()).find(b'github.com') != -1 and \
-       subprocess.call(['git', 'config', '--get-regexp', '^url.*github.com/.*/packages-.insteadOf']) != 0:
-        # If we cloned from github, make sure the url rewrites are set.
-        # Otherwise 'git submodule update --init' prints confusing errors.
-        die("""\
-            It seems you cloned this repository from GitHub. But your git config files
-            don't contain the url rewrites that are needed to make this work (GitHub
-            doesn't support '/' in repository names, so we use a different naming scheme
-            for the submodule repositories there).
-
-            Please run the following commands first:
-
-              git config --global url."git://github.com/ghc/packages-".insteadOf     git://github.com/ghc/packages/
-              git config --global url."http://github.com/ghc/packages-".insteadOf    http://github.com/ghc/packages/
-              git config --global url."https://github.com/ghc/packages-".insteadOf   https://github.com/ghc/packages/
-              git config --global url."ssh://git\@github.com/ghc/packages-".insteadOf ssh://git\@github.com/ghc/packages/
-              git config --global url."git\@github.com:/ghc/packages-".insteadOf      git\@github.com:/ghc/packages/
-
-            And then:
-
-              git submodule update --init
-              ./boot
-
-            Or start over, and clone the GHC repository from the haskell server:
-
-              git clone --recursive git://git.haskell.org/ghc.git
-
-            For more information, see:
-              * https://ghc.haskell.org/trac/ghc/wiki/Newcomers or
-              * https://ghc.haskell.org/trac/ghc/wiki/Building/GettingTheSources#CloningfromGitHub
-        """)
-
 def check_boot_packages():
     # Check that we have all boot packages.
-    import re
     for l in open('packages', 'r'):
         if l.startswith('#'):
             continue
 
-        parts = l.split(' ')
+        parts = [part for part in l.split(' ') if part]
         if len(parts) != 4:
             die("Error: Bad line in packages file: " + l)
 
         dir_ = parts[0]
         tag = parts[1]
 
-        # If $tag is not "-" then it is an optional repository, so its
+        # If tag is not "-" then it is an optional repository, so its
         # absence isn't an error.
-        if tag in args.required_tag:
+        if tag == '-':
             # We would like to just check for a .git directory here,
             # but in an lndir tree we avoid making .git directories,
             # so it doesn't exist. We therefore require that every repo
             # has a LICENSE file instead.
-            license_path = os.path.join(dir_, 'LICENSE')
+            license_path = os.path.join(EXCEPTIONS.get(dir_+'/', dir_), 'LICENSE')
             if not os.path.isfile(license_path):
                 die("""\
-                    Error: %s doesn't exist" % license_path)
+                    Error: %s doesn't exist
                     Maybe you haven't run 'git submodule update --init'?
-                    """)
+                    """ % license_path)
 
 # Create libraries/*/{ghc.mk,GNUmakefile}
 def boot_pkgs():
@@ -92,9 +61,12 @@ def boot_pkgs():
 
     for package in glob.glob("libraries/*/"):
         packages_file = os.path.join(package, 'ghc-packages')
+        print(package)
         if os.path.isfile(packages_file):
             for subpkg in open(packages_file, 'r'):
                 library_dirs.append(os.path.join(package, subpkg.strip()))
+        elif package in EXCEPTIONS:
+            library_dirs.append(EXCEPTIONS[package])
         else:
             library_dirs.append(package)
 
@@ -119,6 +91,9 @@ def boot_pkgs():
                 top = os.path.join(*['..'] * len(os.path.normpath(package).split(os.path.sep)))
 
                 ghc_mk = os.path.join(package, 'ghc.mk')
+                if os.path.exists(ghc_mk):
+                    print('Skipping %s which already exists' % ghc_mk)
+                    continue
                 print('Creating %s' % ghc_mk)
                 with open(ghc_mk, 'w') as f:
                     f.write(dedent(
@@ -187,10 +162,10 @@ def check_build_mk():
             than simply building it to use it.
 
             For information on creating a mk/build.mk file, please see:
-                http://ghc.haskell.org/trac/ghc/wiki/Building/Using#Buildconfiguration
+                https://gitlab.haskell.org/ghc/ghc/wikis/building/using#build-configuration
             """))
 
-check_for_url_rewrites()
+check_boot_packages()
 if not args.hadrian:
     boot_pkgs()
 autoreconf()

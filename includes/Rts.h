@@ -6,7 +6,7 @@
  * exposes externally.
  *
  * To understand the structure of the RTS headers, see the wiki:
- *   http://ghc.haskell.org/trac/ghc/wiki/Commentary/SourceTree/Includes
+ *   https://gitlab.haskell.org/ghc/ghc/wikis/commentary/source-tree/includes
  *
  * ---------------------------------------------------------------------------*/
 
@@ -15,6 +15,12 @@
 #if defined(__cplusplus)
 extern "C" {
 #endif
+
+/* get types from GHC's runtime system */
+#include "ghcconfig.h"
+/* We have to include Types.h before everything else as this defines some
+   macros that will change the behaviour of system headers.  */
+#include "stg/Types.h"
 
 /* We include windows.h very early, as on Win64 the CONTEXT type has
    fields "R8", "R9" and "R10", which goes bad if we've already
@@ -58,7 +64,13 @@ extern "C" {
 #if __GNUC__ >= 4
 #define RTS_UNLIKELY(p) __builtin_expect((p),0)
 #else
-#define RTS_UNLIKELY(p) p
+#define RTS_UNLIKELY(p) (p)
+#endif
+
+#if __GNUC__ >= 4
+#define RTS_LIKELY(p) __builtin_expect(!!(p), 1)
+#else
+#define RTS_LIKELY(p) (p)
 #endif
 
 /* __builtin_unreachable is supported since GNU C 4.5 */
@@ -67,6 +79,10 @@ extern "C" {
 #else
 #define RTS_UNREACHABLE abort()
 #endif
+
+/* Prefetch primitives */
+#define prefetchForRead(ptr) __builtin_prefetch(ptr, 0)
+#define prefetchForWrite(ptr) __builtin_prefetch(ptr, 1)
 
 /* Fix for mingw stat problem (done here so it's early enough) */
 #if defined(mingw32_HOST_OS)
@@ -141,6 +157,14 @@ void _assertFail(const char *filename, unsigned int linenum)
 #define USED_IF_NOT_THREADS
 #endif
 
+#if defined(PROFILING)
+#define USED_IF_PROFILING
+#define USED_IF_NOT_PROFILING STG_UNUSED
+#else
+#define USED_IF_PROFILING STG_UNUSED
+#define USED_IF_NOT_PROFILING
+#endif
+
 #define FMT_SizeT    "zu"
 #define FMT_HexSizeT "zx"
 
@@ -159,6 +183,9 @@ void _assertFail(const char *filename, unsigned int linenum)
 
 /* Global constraints */
 #include "rts/Constants.h"
+
+/* Runtime flags */
+#include "rts/Flags.h"
 
 /* Profiling information */
 #include "rts/prof/CCS.h"
@@ -183,13 +210,13 @@ void _assertFail(const char *filename, unsigned int linenum)
 #include "rts/storage/ClosureMacros.h"
 #include "rts/storage/MBlock.h"
 #include "rts/storage/GC.h"
+#include "rts/NonMoving.h"
 
 /* Other RTS external APIs */
 #include "rts/Parallel.h"
 #include "rts/Signals.h"
 #include "rts/BlockSignals.h"
 #include "rts/Hpc.h"
-#include "rts/Flags.h"
 #include "rts/Adjustor.h"
 #include "rts/FileLock.h"
 #include "rts/GetTime.h"
@@ -267,26 +294,27 @@ TICK_VAR(2)
 #define IF_RTSFLAGS(c,s)  if (RtsFlags.c) { s; } doNothing()
 
 #if defined(DEBUG)
+/* See Note [RtsFlags is a pointer in STG code] */
 #if IN_STG_CODE
 #define IF_DEBUG(c,s)  if (RtsFlags[0].DebugFlags.c) { s; } doNothing()
 #else
 #define IF_DEBUG(c,s)  if (RtsFlags.DebugFlags.c) { s; } doNothing()
-#endif
+#endif /* IN_STG_CODE */
 #else
 #define IF_DEBUG(c,s)  doNothing()
-#endif
+#endif /* DEBUG */
 
 #if defined(DEBUG)
 #define DEBUG_ONLY(s) s
 #else
 #define DEBUG_ONLY(s) doNothing()
-#endif
+#endif /* DEBUG */
 
 #if defined(DEBUG)
 #define DEBUG_IS_ON   1
 #else
 #define DEBUG_IS_ON   0
-#endif
+#endif /* DEBUG */
 
 /* -----------------------------------------------------------------------------
    Useful macros and inline functions

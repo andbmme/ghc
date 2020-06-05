@@ -8,12 +8,19 @@
 -- The above warning suppression flags are a temporary kludge.
 -- While working on this module you are encouraged to remove it and fix
 -- any warnings in the module. See
---     http://ghc.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#Warnings
+--     https://gitlab.haskell.org/ghc/ghc/wikis/commentary/coding-style#warnings
 -- for details
 module Main(main) where
 
+-- Note [Genapply target as host for RTS macros]
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- We improperly include *HOST* macros for our target...
 #include "../../includes/ghcconfig.h"
-#include "../../includes/stg/HaskellMachRegs.h"
+
+-- ...so that this header defines the right stuff.  It is the RTS's host, but
+-- our target, as we are generating code that uses that RTS.
+#include "../../includes/stg/MachRegsForHost.h"
+
 #include "../../includes/rts/Constants.h"
 
 -- Needed for TAG_BITS
@@ -31,7 +38,7 @@ import System.IO
 import Control.Arrow ((***))
 
 -- -----------------------------------------------------------------------------
--- Argument kinds (rougly equivalent to PrimRep)
+-- Argument kinds (roughly equivalent to PrimRep)
 
 data ArgRep
   = N   -- non-ptr
@@ -903,7 +910,7 @@ genStackApply regstatus args =
 --
 -- These code fragments are used to save registers on the stack at a heap
 -- check failure in the entry code for a function.  We also have to save R1
--- and the return address (stg_gc_fun_info) on the stack.  See stg_gc_fun_gen
+-- and the return address (stg_gc_fun_info) on the stack.  See __stg_gc_fun
 -- in HeapStackCheck.cmm for more details.
 
 mkStackSaveEntryLabel :: [ArgRep] -> Doc
@@ -996,7 +1003,7 @@ applyTypes = [
 --
 --  NOTE: other places to change if you change stackApplyTypes:
 --       - includes/rts/storage/FunTypes.h
---       - compiler/codeGen/StgCmmLayout.hs: stdPattern
+--       - GHC.StgToCmm.Layout: stdPattern
 stackApplyTypes = [
         [],
         [N],

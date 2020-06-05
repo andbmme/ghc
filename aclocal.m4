@@ -195,6 +195,9 @@ AC_DEFUN([FPTOOLS_SET_HASKELL_PLATFORM_VARS],
         powerpc64le)
             test -z "[$]2" || eval "[$]2=\"ArchPPC_64 {ppc_64ABI = ELF_V2}\""
             ;;
+        s390x)
+            test -z "[$]2" || eval "[$]2=ArchS390X"
+            ;;
         sparc)
             test -z "[$]2" || eval "[$]2=ArchSPARC"
             ;;
@@ -217,7 +220,7 @@ AC_DEFUN([FPTOOLS_SET_HASKELL_PLATFORM_VARS],
         mipsel)
             test -z "[$]2" || eval "[$]2=ArchMipsel"
             ;;
-        hppa|hppa1_1|ia64|m68k|nios2|riscv32|riscv64|rs6000|s390|s390x|sh4|vax)
+        hppa|hppa1_1|ia64|m68k|nios2|riscv32|riscv64|rs6000|s390|sh4|vax)
             test -z "[$]2" || eval "[$]2=ArchUnknown"
             ;;
         *)
@@ -288,29 +291,50 @@ AC_DEFUN([FPTOOLS_SET_HASKELL_PLATFORM_VARS],
         esac
     }
 
+    dnl Note [autoconf assembler checks and -flto]
+    dnl ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    dnl
+    dnl Autoconf's AC_COMPILE_IFELSE macro is fragile in the case of checks
+    dnl which require that the assembler is run. Specifically, GCC does not run
+    dnl the assembler if invoked with `-c -flto`; it merely dumps its internal
+    dnl AST to the object file, to be compiled and assembled during the final
+    dnl link.
+    dnl
+    dnl This can cause configure checks like that for the
+    dnl .subsections_via_symbols directive to pass unexpected (see #16440),
+    dnl leading the build system to incorrectly conclude that the directive is
+    dnl supported.
+    dnl
+    dnl For this reason, it is important that configure checks that rely on the
+    dnl assembler failing use AC_LINK_IFELSE rather than AC_COMPILE_IFELSE,
+    dnl ensuring that the assembler sees the check.
+    dnl
+
     dnl ** check for Apple-style dead-stripping support
     dnl    (.subsections-via-symbols assembler directive)
 
     AC_MSG_CHECKING(for .subsections_via_symbols)
-    AC_COMPILE_IFELSE(
+    dnl See Note [autoconf assembler checks and -flto]
+    AC_LINK_IFELSE(
         [AC_LANG_PROGRAM([], [__asm__ (".subsections_via_symbols");])],
         [AC_MSG_RESULT(yes)
-         HaskellHaveSubsectionsViaSymbols=True
+         TargetHasSubsectionsViaSymbols=YES
          AC_DEFINE([HAVE_SUBSECTIONS_VIA_SYMBOLS],[1],
                    [Define to 1 if Apple-style dead-stripping is supported.])
         ],
-        [HaskellHaveSubsectionsViaSymbols=False
+        [TargetHasSubsectionsViaSymbols=NO
          AC_MSG_RESULT(no)])
 
     dnl ** check for .ident assembler directive
 
     AC_MSG_CHECKING(whether your assembler supports .ident directive)
-    AC_COMPILE_IFELSE(
-        [AC_LANG_SOURCE([__asm__ (".ident \"GHC x.y.z\"");])],
+    dnl See Note [autoconf assembler checks and -flto]
+    AC_LINK_IFELSE(
+        [AC_LANG_PROGRAM([__asm__ (".ident \"GHC x.y.z\"");], [])],
         [AC_MSG_RESULT(yes)
-         HaskellHaveIdentDirective=True],
+         TargetHasIdentDirective=YES],
         [AC_MSG_RESULT(no)
-         HaskellHaveIdentDirective=False])
+         TargetHasIdentDirective=NO])
 
     dnl *** check for GNU non-executable stack note support (ELF only)
     dnl     (.section .note.GNU-stack,"",@progbits)
@@ -330,12 +354,19 @@ AC_DEFUN([FPTOOLS_SET_HASKELL_PLATFORM_VARS],
         ;;
     esac
     AC_MSG_CHECKING(for GNU non-executable stack support)
-    AC_COMPILE_IFELSE(
-        [AC_LANG_PROGRAM([__asm__ (".section .note.GNU-stack,\"\",$progbits");], [0])],
+    dnl See Note [autoconf assembler checks and -flto]
+    AC_LINK_IFELSE(
+       dnl the `main` function is placed after the .note.GNU-stack directive
+       dnl so we need to ensure that the active segment is correctly set,
+       dnl otherwise `main` will be placed in the wrong segment.
+        [AC_LANG_PROGRAM([
+           __asm__ (".section .note.GNU-stack,\"\",$progbits");
+           __asm__ (".section .text");
+         ], [0])],
         [AC_MSG_RESULT(yes)
-         HaskellHaveGnuNonexecStack=True],
+         TargetHasGnuNonexecStack=YES],
         [AC_MSG_RESULT(no)
-         HaskellHaveGnuNonexecStack=False])
+         TargetHasGnuNonexecStack=NO])
     CFLAGS="$CFLAGS2"
 
     checkArch "$BuildArch" "HaskellBuildArch"
@@ -344,17 +375,19 @@ AC_DEFUN([FPTOOLS_SET_HASKELL_PLATFORM_VARS],
 
     checkArch "$HostArch" "HaskellHostArch"
     checkVendor "$HostVendor"
-    checkOS "$HostOS" ""
+    checkOS "$HostOS" "HaskellHostOs"
 
     checkArch "$TargetArch" "HaskellTargetArch"
     checkVendor "$TargetVendor"
     checkOS "$TargetOS" "HaskellTargetOs"
 
+    AC_SUBST(HaskellHostArch)
+    AC_SUBST(HaskellHostOs)
     AC_SUBST(HaskellTargetArch)
     AC_SUBST(HaskellTargetOs)
-    AC_SUBST(HaskellHaveSubsectionsViaSymbols)
-    AC_SUBST(HaskellHaveIdentDirective)
-    AC_SUBST(HaskellHaveGnuNonexecStack)
+    AC_SUBST(TargetHasSubsectionsViaSymbols)
+    AC_SUBST(TargetHasIdentDirective)
+    AC_SUBST(TargetHasGnuNonexecStack)
 ])
 
 
@@ -469,29 +502,28 @@ AC_DEFUN([FP_SETTINGS],
 [
     if test "$windows" = YES -a "$EnableDistroToolchain" = "NO"
     then
-        mingw_bin_prefix=mingw/bin/
-	SettingsCCompilerCommand="\$tooldir/${mingw_bin_prefix}gcc.exe"
-	SettingsHaskellCPPCommand="\$tooldir/${mingw_bin_prefix}gcc.exe"
+        mingw_bin_prefix='$$tooldir/mingw/bin/'
+        SettingsCCompilerCommand="${mingw_bin_prefix}gcc.exe"
+        SettingsHaskellCPPCommand="${mingw_bin_prefix}gcc.exe"
         SettingsHaskellCPPFlags="$HaskellCPPArgs"
-	SettingsLdCommand="\$tooldir/${mingw_bin_prefix}ld.exe"
-	SettingsArCommand="\$tooldir/${mingw_bin_prefix}ar.exe"
-	SettingsRanlibCommand="\$tooldir/${mingw_bin_prefix}ranlib.exe"
-	SettingsPerlCommand='$tooldir/perl/perl.exe'
-	SettingsDllWrapCommand="\$tooldir/${mingw_bin_prefix}dllwrap.exe"
-	SettingsWindresCommand="\$tooldir/${mingw_bin_prefix}windres.exe"
-        SettingsTouchCommand='$topdir/bin/touchy.exe'
+        SettingsLdCommand="${mingw_bin_prefix}ld.exe"
+        SettingsArCommand="${mingw_bin_prefix}ar.exe"
+        SettingsRanlibCommand="${mingw_bin_prefix}ranlib.exe"
+        SettingsDllWrapCommand="${mingw_bin_prefix}dllwrap.exe"
+        SettingsWindresCommand="${mingw_bin_prefix}windres.exe"
+        SettingsTouchCommand='$$topdir/bin/touchy.exe'
     elif test "$EnableDistroToolchain" = "YES"
     then
         SettingsCCompilerCommand="$(basename $CC)"
         SettingsCCompilerFlags="$CONF_CC_OPTS_STAGE2"
+        SettingsCxxCompilerFlags="$CONF_CXX_OPTS_STAGE2"
         SettingsHaskellCPPCommand="$(basename $HaskellCPPCmd)"
         SettingsHaskellCPPFlags="$HaskellCPPArgs"
         SettingsLdCommand="$(basename $LdCmd)"
         SettingsArCommand="$(basename $ArCmd)"
-        SettingsPerlCommand="$(basename $PerlCmd)"
         SettingsDllWrapCommand="$(basename $DllWrapCmd)"
         SettingsWindresCommand="$(basename $WindresCmd)"
-        SettingsTouchCommand='$topdir/bin/touchy.exe'
+        SettingsTouchCommand='$$topdir/bin/touchy.exe'
     else
         SettingsCCompilerCommand="$CC"
         SettingsHaskellCPPCommand="$HaskellCPPCmd"
@@ -499,7 +531,6 @@ AC_DEFUN([FP_SETTINGS],
         SettingsLdCommand="$LdCmd"
         SettingsArCommand="$ArCmd"
         SettingsRanlibCommand="$RanlibCmd"
-        SettingsPerlCommand="$PerlCmd"
         if test -z "$DllWrapCmd"
         then
             SettingsDllWrapCommand="/bin/false"
@@ -539,6 +570,7 @@ AC_DEFUN([FP_SETTINGS],
       SettingsOptCommand="$OptCmd"
     fi
     SettingsCCompilerFlags="$CONF_CC_OPTS_STAGE2"
+    SettingsCxxCompilerFlags="$CONF_CXX_OPTS_STAGE2"
     SettingsCCompilerLinkFlags="$CONF_GCC_LINKER_OPTS_STAGE2"
     SettingsCCompilerSupportsNoPie="$CONF_GCC_SUPPORTS_NO_PIE"
     SettingsLdFlags="$CONF_LD_LINKER_OPTS_STAGE2"
@@ -546,13 +578,13 @@ AC_DEFUN([FP_SETTINGS],
     AC_SUBST(SettingsHaskellCPPCommand)
     AC_SUBST(SettingsHaskellCPPFlags)
     AC_SUBST(SettingsCCompilerFlags)
+    AC_SUBST(SettingsCxxCompilerFlags)
     AC_SUBST(SettingsCCompilerLinkFlags)
     AC_SUBST(SettingsCCompilerSupportsNoPie)
     AC_SUBST(SettingsLdCommand)
     AC_SUBST(SettingsLdFlags)
     AC_SUBST(SettingsArCommand)
     AC_SUBST(SettingsRanlibCommand)
-    AC_SUBST(SettingsPerlCommand)
     AC_SUBST(SettingsDllWrapCommand)
     AC_SUBST(SettingsWindresCommand)
     AC_SUBST(SettingsLibtoolCommand)
@@ -615,6 +647,7 @@ AC_DEFUN([FP_SET_CFLAGS_C99],
 # $5 is the name of the CPP flags variable
 AC_DEFUN([FPTOOLS_SET_C_LD_FLAGS],
 [
+    AC_REQUIRE([FP_PROG_LD_IS_GNU])
     AC_MSG_CHECKING([Setting up $2, $3, $4 and $5])
     case $$1 in
     i386-*)
@@ -631,10 +664,20 @@ AC_DEFUN([FPTOOLS_SET_C_LD_FLAGS],
         $2="$$2 -march=i686"
         ;;
     x86_64-unknown-solaris2)
+        # Solaris is a multi-lib platform, providing both 32- and 64-bit
+        # user-land. It appears to default to 32-bit builds but we of course want to
+        # compile for 64-bits on x86-64.
+        #
+        # On OpenSolaris uses gnu ld whereas SmartOS appears to use the Solaris
+        # implementation, which rather uses the -64 flag.
         $2="$$2 -m64"
         $3="$$3 -m64"
-        $4="$$4 -m64"
         $5="$$5 -m64"
+        if test "$fp_cv_gnu_ld" = "yes"; then
+            $4="$$4 -m64"
+        else
+            $4="$$4 -64"
+        fi
         ;;
     alpha-*)
         # For now, to suppress the gcc warning "call-clobbered
@@ -693,15 +736,6 @@ AC_DEFUN([FPTOOLS_SET_C_LD_FLAGS],
 
     esac
 
-    # If gcc knows about the stack protector, turn it off.
-    # Otherwise the stack-smash handler gets triggered.
-    echo 'int main(void) {return 0;}' > conftest.c
-    if $CC -c conftest.c -fno-stack-protector > /dev/null 2>&1
-    then
-        $2="$$2 -fno-stack-protector"
-    fi
-
-    rm -f conftest.c conftest.o
     AC_MSG_RESULT([done])
 ])
 
@@ -822,6 +856,48 @@ AC_DEFUN([FP_CHECK_SIZEOF_AND_ALIGNMENT],
 FP_CHECK_ALIGNMENT([$1])
 ])# FP_CHECK_SIZEOF_AND_ALIGNMENT
 
+# FP_DEFAULT_CHOICE_OVERRIDE_CHECK(
+#   flag, name, anti name, var name, help string,
+#   [var true val], [var false val], [flag true val])
+# ---------------------------------------------------
+# Helper for when there is a automatic detection and an explicit flag for the
+# user to override disable a feature, but not override enable a feature.
+#
+# $1 = flag of feature
+# $2 = name of feature
+# $3 = name of anti feature
+# $4 = name of variable
+# $5 = help string
+# $6 = when true
+# $7 = when false
+# $8 = default explicit case (yes/no). Used for handle "backwards" legacy
+#      options where enabling makes fewer assumptions than disabling.
+AC_DEFUN(
+    [FP_DEFAULT_CHOICE_OVERRIDE_CHECK],
+    [AC_ARG_ENABLE(
+        [$1],
+        [AC_HELP_STRING(
+            [--enable-$1],
+            [$5])],
+        [AS_IF(
+           [test x"$enableval" = x"m4_default([$8],yes)"],
+           [AS_CASE(
+               [x"$$4Default"],
+               [x"m4_default([$6],YES)"],
+                 [AC_MSG_NOTICE([user chose $2 matching default for platform])],
+               [x"m4_default([$7],NO)"],
+                 [AC_MSG_ERROR([user chose $2 overriding only supported option for platform])],
+               [AC_MSG_ERROR([invalid default])])
+            $4=m4_default([$6],YES)],
+           [AS_CASE(
+               [x"$$4Default"],
+               [x"m4_default([$6],YES)"],
+                 [AC_MSG_NOTICE([user chose $3 overriding for platform])],
+               [x"m4_default([$7],NO)"],
+                 [AC_MSG_NOTICE([user chose $3 matching default for platform])],
+               [AC_MSG_ERROR([invalid default])])
+            $4=m4_default([$7],NO)])],
+        [$4="$$4Default"])])
 
 # FP_LEADING_UNDERSCORE
 # ---------------------
@@ -851,7 +927,7 @@ case $TargetPlatform in
       esac ;;
     i386-unknown-mingw32) fptools_cv_leading_underscore=yes;;
     x86_64-unknown-mingw32) fptools_cv_leading_underscore=no;;
-    *) AC_RUN_IFELSE([AC_LANG_SOURCE([[#ifdef HAVE_NLIST_H
+    *) AC_RUN_IFELSE([AC_LANG_SOURCE([[#if defined(HAVE_NLIST_H)
 #include <nlist.h>
 struct nlist xYzzY1[] = {{"xYzzY1", 0},{0}};
 struct nlist xYzzY2[] = {{"_xYzzY2", 0},{0}};
@@ -861,7 +937,7 @@ int main(argc, argv)
 int argc;
 char **argv;
 {
-#ifdef HAVE_NLIST_H
+#if defined(HAVE_NLIST_H)
     if(nlist(argv[0], xYzzY1) == 0 && xYzzY1[0].n_value != 0)
         exit(1);
     if(nlist(argv[0], xYzzY2) == 0 && xYzzY2[0].n_value != 0)
@@ -911,18 +987,22 @@ AS_IF([test "$fp_num1" $2 "$fp_num2"], [$4], [$5])[]dnl
 
 
 dnl
-dnl Check for Happy and version.
-dnl If there's no installed Happy, we look
-dnl for a happy source tree and point the build system at that instead.
+dnl Check for Happy and version:
+dnl
+dnl 1. Use happy specified in env var HAPPY
+dnl 2. Find happy in path
+dnl 3. Check happy version
+dnl
 dnl If you increase the minimum version requirement, please also update:
-dnl https://ghc.haskell.org/trac/ghc/wiki/Building/Preparation/Tools
+dnl https://gitlab.haskell.org/ghc/ghc/wikis/building/preparation/tools
 dnl
 AC_DEFUN([FPTOOLS_HAPPY],
-[AC_PATH_PROG(HappyCmd,happy,)
-
+[AC_PATH_PROG(HAPPY,[happy],)
+AC_SUBST(HappyCmd,$HAPPY)
 AC_CACHE_CHECK([for version of happy], fptools_cv_happy_version,
 changequote(, )dnl
-[if test x"$HappyCmd" != x; then
+[
+if test x"$HappyCmd" != x; then
    fptools_cv_happy_version=`"$HappyCmd" -v |
               grep 'Happy Version' | sed -e 's/Happy Version \([^ ]*\).*/\1/g'` ;
 else
@@ -930,10 +1010,10 @@ else
 fi;
 changequote([, ])dnl
 ])
-if test ! -f compiler/parser/Parser.hs || test ! -f compiler/cmm/CmmParse.hs
+if test ! -f compiler/GHC/Parser.hs || test ! -f compiler/GHC/Cmm/Parser.hs
 then
-    FP_COMPARE_VERSIONS([$fptools_cv_happy_version],[-lt],[1.19.4],
-      [AC_MSG_ERROR([Happy version 1.19.4 or later is required to compile GHC.])])[]
+    FP_COMPARE_VERSIONS([$fptools_cv_happy_version],[-lt],[1.19.10],
+      [AC_MSG_ERROR([Happy version 1.19.10 or later is required to compile GHC.])])[]
 fi
 HappyVersion=$fptools_cv_happy_version;
 AC_SUBST(HappyVersion)
@@ -941,13 +1021,17 @@ AC_SUBST(HappyVersion)
 
 dnl
 dnl Check for Alex and version.
+dnl
+dnl 1. Use alex specified in env var ALEX
+dnl 2. Find alex in path
+dnl 3. Check alex version
+dnl
 dnl If you increase the minimum version requirement, please also update:
-dnl https://ghc.haskell.org/trac/ghc/wiki/Building/Preparation/Tools
+dnl https://gitlab.haskell.org/ghc/ghc/wikis/building/preparation/tools
 dnl
 AC_DEFUN([FPTOOLS_ALEX],
-[
-AC_PATH_PROG(AlexCmd,alex,)
-
+[AC_PATH_PROG(ALEX,[alex],)
+AC_SUBST(AlexCmd,$ALEX)
 AC_CACHE_CHECK([for version of alex], fptools_cv_alex_version,
 changequote(, )dnl
 [if test x"$AlexCmd" != x; then
@@ -958,16 +1042,13 @@ else
 fi;
 changequote([, ])dnl
 ])
-FP_COMPARE_VERSIONS([$fptools_cv_alex_version],[-ge],[3.0],
-  [Alex3=YES],[Alex3=NO])
-if test ! -f compiler/cmm/CmmLex.hs || test ! -f compiler/parser/Lexer.hs
+if test ! -f compiler/GHC/Parser/Lexer.hs || test ! -f compiler/GHC/Cmm/Lexer.hs
 then
-    FP_COMPARE_VERSIONS([$fptools_cv_alex_version],[-lt],[3.1.0],
-      [AC_MSG_ERROR([Alex version 3.1.0 or later is required to compile GHC.])])[]
+    FP_COMPARE_VERSIONS([$fptools_cv_alex_version],[-lt],[3.1.7],
+      [AC_MSG_ERROR([Alex version 3.1.7 or later is required to compile GHC.])])[]
 fi
 AlexVersion=$fptools_cv_alex_version;
 AC_SUBST(AlexVersion)
-AC_SUBST(Alex3)
 ])
 
 
@@ -1245,55 +1326,47 @@ AC_DEFUN([FP_PROG_AR_NEEDS_RANLIB],[
 # FP_GCC_VERSION
 # -----------
 # Extra testing of the result AC_PROG_CC, testing the gcc version no. Sets the
-# output variable GccVersion.
-AC_DEFUN([FP_GCC_VERSION],
-[AC_REQUIRE([AC_PROG_CC])
-if test -z "$CC"
-then
-  AC_MSG_ERROR([gcc is required])
-fi
-GccLT46=NO
-AC_CACHE_CHECK([version of gcc], [fp_cv_gcc_version],
-[
-    # Be sure only to look at the first occurrence of the "version " string;
-    # Some Apple compilers emit multiple messages containing this string.
-    fp_cv_gcc_version="`$CC -v 2>&1 | sed -n -e '1,/version /s/.*version [[^0-9]]*\([[0-9.]]*\).*/\1/p'`"
-    FP_COMPARE_VERSIONS([$fp_cv_gcc_version], [-lt], [4.4],
-                        [AC_MSG_ERROR([Need at least gcc version 4.4 (4.7+ recommended)])])
-    FP_COMPARE_VERSIONS([$fp_cv_gcc_version], [-lt], [4.6], GccLT46=YES)
-])
-AC_SUBST([GccVersion], [$fp_cv_gcc_version])
-AC_SUBST(GccLT46)
+# (unsubstituted) output variable GccVersion.
+AC_DEFUN([FP_GCC_VERSION], [
+  AC_REQUIRE([AC_PROG_CC])
+  if test -z "$CC"; then
+    AC_MSG_ERROR([C compiler is required])
+  fi
+
+  if $CC --version | grep --quiet gcc; then
+    AC_CACHE_CHECK([version of gcc], [fp_cv_gcc_version],
+    [
+        # Be sure only to look at the first occurrence of the "version " string;
+        # Some Apple compilers emit multiple messages containing this string.
+        AC_MSG_CHECKING([version of gcc])
+        fp_cv_gcc_version="`$CC -v 2>&1 | sed -n -e '1,/version /s/.*version [[^0-9]]*\([[0-9.]]*\).*/\1/p'`"
+        AC_MSG_RESULT([$fp_cv_gcc_version])
+        FP_COMPARE_VERSIONS([$fp_cv_gcc_version], [-lt], [4.6],
+                            [AC_MSG_ERROR([Need at least gcc version 4.6 (4.7+ recommended)])])
+    ])
+    AC_SUBST([GccVersion], [$fp_cv_gcc_version])
+  else
+    AC_MSG_NOTICE([\$CC is not gcc; assuming it's a reasonably new C compiler])
+  fi
 ])# FP_GCC_VERSION
 
 dnl Check to see if the C compiler is clang or llvm-gcc
 dnl
-GccIsClang=NO
 AC_DEFUN([FP_CC_LLVM_BACKEND],
-[AC_REQUIRE([AC_PROG_CC])
-AC_MSG_CHECKING([whether C compiler is clang])
-$CC -x c /dev/null -dM -E > conftest.txt 2>&1
-if grep "__clang__" conftest.txt >/dev/null 2>&1; then
-  AC_SUBST([CC_CLANG_BACKEND], [1])
-  AC_SUBST([CC_LLVM_BACKEND], [1])
-  GccIsClang=YES
-  AC_MSG_RESULT([yes])
-else
-  AC_MSG_RESULT([no])
-  AC_MSG_CHECKING([whether C compiler has an LLVM back end])
-  if grep "__llvm__" conftest.txt >/dev/null 2>&1; then
-    AC_SUBST([CC_CLANG_BACKEND], [0])
-    AC_SUBST([CC_LLVM_BACKEND], [1])
-    AC_MSG_RESULT([yes])
-  else
-    AC_SUBST([CC_CLANG_BACKEND], [0])
-    AC_SUBST([CC_LLVM_BACKEND], [0])
-    AC_MSG_RESULT([no])
-  fi
-fi
-AC_SUBST(GccIsClang)
+  [AC_REQUIRE([AC_PROG_CC])
+   AC_MSG_CHECKING([whether C compiler has an LLVM back end])
+   $CC -x c /dev/null -dM -E > conftest.txt 2>&1
+   if grep "__llvm__" conftest.txt >/dev/null 2>&1; then
+     AC_DEFINE([CC_LLVM_BACKEND], [1], [Define (to 1) if C compiler has an LLVM back end])
+     CcLlvmBackend=YES
+     AC_MSG_RESULT([yes])
+   else
+     CcLlvmBackend=NO
+     AC_MSG_RESULT([no])
+   fi
+   AC_SUBST(CcLlvmBackend)
 
-rm -f conftest.txt
+   rm -f conftest.txt
 ])
 
 # FP_GCC_SUPPORTS__ATOMICS
@@ -1303,7 +1376,7 @@ AC_DEFUN([FP_GCC_SUPPORTS__ATOMICS],
 [
    AC_REQUIRE([AC_PROG_CC])
    AC_MSG_CHECKING([whether GCC supports __atomic_ builtins])
-   echo 'int test(int *x) { int y; __atomic_load(&x, &y, __ATOMIC_SEQ_CST); return x; }' > conftest.c
+   echo 'int test(int *x) { int y; __atomic_load(x, &y, __ATOMIC_SEQ_CST); return y; }' > conftest.c
    if $CC -c conftest.c > /dev/null 2>&1; then
        CONF_GCC_SUPPORTS__ATOMICS=YES
        AC_MSG_RESULT([yes])
@@ -1332,22 +1405,6 @@ AC_DEFUN([FP_GCC_SUPPORTS_NO_PIE],
        AC_MSG_RESULT([no])
    fi
    rm -f conftest.c conftest.o conftest
-])
-
-dnl Small feature test for perl version. Assumes PerlCmd
-dnl contains path to perl binary.
-dnl
-dnl (Perl versions prior to v5.6 does not contain the string "v5";
-dnl instead they display version strings such as "version 5.005".)
-dnl
-AC_DEFUN([FPTOOLS_CHECK_PERL_VERSION],
-[$PerlCmd -v >conftest.out 2>&1
-   if grep "v5" conftest.out >/dev/null 2>&1; then
-      :
-   else
-      AC_MSG_ERROR([your version of perl probably won't work, try upgrading it.])
-   fi
-rm -fr conftest*
 ])
 
 
@@ -1510,18 +1567,17 @@ AC_SUBST([GhcPkgCmd])
 # to compile .hc code.
 #
 # -fwrapv is needed for gcc to emit well-behaved code in the presence of
-# integer wrap around. (Trac #952)
+# integer wrap around. (#952)
 #
 AC_DEFUN([FP_GCC_EXTRA_FLAGS],
 [AC_REQUIRE([FP_GCC_VERSION])
 AC_CACHE_CHECK([for extra options to pass gcc when compiling via C], [fp_cv_gcc_extra_opts],
-[fp_cv_gcc_extra_opts=
- FP_COMPARE_VERSIONS([$fp_cv_gcc_version], [-ge], [3.4],
-  [fp_cv_gcc_extra_opts="$fp_cv_gcc_extra_opts -fwrapv"],
-  [])
- FP_COMPARE_VERSIONS([$fp_cv_gcc_version], [-ge], [4.0],
-  [fp_cv_gcc_extra_opts="$fp_cv_gcc_extra_opts -fno-builtin"],
-  [])
+[
+ if test "$Unregisterised" = "YES"; then
+   # These used to be conditioned on gcc version but we no longer support
+   # GCC versions which lack support for these flags
+   fp_cv_gcc_extra_opts="-fwrapv -fno-builtin"
+ fi
 ])
 AC_SUBST([GccExtraViaCOpts],$fp_cv_gcc_extra_opts)
 ])
@@ -1536,7 +1592,7 @@ if test "$RELEASE" = "NO"; then
     if test -f VERSION_DATE; then
         PACKAGE_VERSION=${PACKAGE_VERSION}.`cat VERSION_DATE`
         AC_MSG_RESULT(given $PACKAGE_VERSION)
-    elif test -d .git; then
+    elif test -e .git; then
         changequote(, )dnl
         ver_posixtime=`git log -1 --pretty=format:%ct`
         ver_date=`perl -MPOSIX -e "print strftime('%Y%m%d', gmtime($ver_posixtime));"`
@@ -1649,16 +1705,16 @@ then
     [fptools_cv_timer_create_works],
     [AC_TRY_RUN([
 #include <stdio.h>
-#ifdef HAVE_STDLIB_H
+#if defined(HAVE_STDLIB_H)
 #include <stdlib.h>
 #endif
-#ifdef HAVE_TIME_H
+#if defined(HAVE_TIME_H)
 #include <time.h>
 #endif
-#ifdef HAVE_SIGNAL_H
+#if defined(HAVE_SIGNAL_H)
 #include <signal.h>
 #endif
-#ifdef HAVE_UNISTD_H
+#if defined(HAVE_UNISTD_H)
 #include <unistd.h>
 #endif
 
@@ -1787,8 +1843,22 @@ AC_DEFUN([FP_GMP],
       [directory containing gmp library])],
       [GMP_LIB_DIRS=$withval])
 
+  AC_ARG_WITH([intree-gmp],
+    [AC_HELP_STRING([--with-intree-gmp],
+      [force using the in-tree GMP])],
+      [GMP_FORCE_INTREE=YES],
+      [GMP_FORCE_INTREE=NO])
+
+  AC_ARG_WITH([gmp-framework-preferred],
+    [AC_HELP_STRING([--with-gmp-framework-preferred],
+      [on OSX, prefer the GMP framework to the gmp lib])],
+      [GMP_PREFER_FRAMEWORK=YES],
+      [GMP_PREFER_FRAMEWORK=NO])
+
   AC_SUBST(GMP_INCLUDE_DIRS)
   AC_SUBST(GMP_LIB_DIRS)
+  AC_SUBST(GMP_FORCE_INTREE)
+  AC_SUBST(GMP_PREFER_FRAMEWORK)
 ])# FP_GMP
 
 # FP_CURSES
@@ -1935,7 +2005,7 @@ case "$1" in
 
 # GHC_LLVM_TARGET(target_cpu, target_vendor, target_os, llvm_target_var)
 # --------------------------------
-# converts the canonicalized target into someting llvm can understand
+# converts the canonicalized target into something llvm can understand
 AC_DEFUN([GHC_LLVM_TARGET], [
   case "$2-$3" in
     *-freebsd*-gnueabihf)
@@ -1954,7 +2024,7 @@ AC_DEFUN([GHC_LLVM_TARGET], [
     # for the LLVM Target. Otherwise these would be
     # turned into just `-linux` and fail to be found
     # in the `llvm-targets` file.
-    *-android*|*-gnueabi*)
+    *-android*|*-gnueabi*|*-musleabi*)
       GHC_CONVERT_VENDOR([$2],[llvm_target_vendor])
       llvm_target_os="$3"
       ;;
@@ -2006,11 +2076,14 @@ AC_DEFUN([GHC_CONVERT_OS],[
       linux-*|linux)
         $3="linux"
         ;;
+      netbsd*)
+        $3="netbsd"
+        ;;
       openbsd*)
         $3="openbsd"
         ;;
       # As far as I'm aware, none of these have relevant variants
-      freebsd|netbsd|dragonfly|hpux|linuxaout|kfreebsdgnu|freebsd2|mingw32|darwin|nextstep2|nextstep3|sunos4|ultrix|haiku)
+      freebsd|dragonfly|hpux|linuxaout|kfreebsdgnu|freebsd2|mingw32|darwin|nextstep2|nextstep3|sunos4|ultrix|haiku)
         $3="$1"
         ;;
       msys)
@@ -2054,39 +2127,39 @@ fi
 AC_SUBST($1)
 ])
 
-# LIBRARY_VERSION(lib, [dir])
+# LIBRARY_VERSION(lib, [cabal_file])
 # --------------------------------
 # Gets the version number of a library.
 # If $1 is ghc-prim, then we define LIBRARY_ghc_prim_VERSION as 1.2.3
 # $2 points to the directory under libraries/
 AC_DEFUN([LIBRARY_VERSION],[
-dir=m4_default([$2],[$1])
-LIBRARY_[]translit([$1], [-], [_])[]_VERSION=`grep -i "^version:" libraries/${dir}/$1.cabal | sed "s/.* //"`
+cabal_file=m4_default([$2],[$1/$1.cabal])
+LIBRARY_[]translit([$1], [-], [_])[]_VERSION=`grep -i "^version:" libraries/${cabal_file} | sed "s/.* //"`
 AC_SUBST(LIBRARY_[]translit([$1], [-], [_])[]_VERSION)
 ])
 
 # XCODE_VERSION()
 # --------------------------------
-# Gets the version number of XCode, if on a Mac
+# Gets the version number of Xcode, if on a Mac
 AC_DEFUN([XCODE_VERSION],[
     if test "$TargetVendor_CPP" = "apple"
     then
-        AC_MSG_CHECKING(XCode version)
-        XCodeVersion=`xcodebuild -version | grep Xcode | sed "s/Xcode //"`
-        # Old XCode versions don't actually give the XCode version
-        if test "$XCodeVersion" = ""
+        AC_MSG_CHECKING(Xcode version)
+        XcodeVersion=`(xcode-select -p >& /dev/null && xcodebuild -version) | grep Xcode | sed "s/Xcode //"`
+        # Old Xcode versions don't actually give the Xcode version
+        if test "$XcodeVersion" = ""
         then
             AC_MSG_RESULT(not found (too old?))
-            XCodeVersion1=0
-            XCodeVersion2=0
+            XcodeVersion1=0
+            XcodeVersion2=0
         else
-            AC_MSG_RESULT($XCodeVersion)
-            XCodeVersion1=`echo "$XCodeVersion" | sed 's/\..*//'`
+            AC_MSG_RESULT($XcodeVersion)
+            XcodeVersion1=`echo "$XcodeVersion" | sed 's/\..*//'`
             changequote(, )dnl
-            XCodeVersion2=`echo "$XCodeVersion" | sed 's/[^.]*\.\([^.]*\).*/\1/'`
+            XcodeVersion2=`echo "$XcodeVersion" | sed 's/[^.]*\.\([^.]*\).*/\1/'`
             changequote([, ])dnl
-            AC_MSG_NOTICE(XCode version component 1: $XCodeVersion1)
-            AC_MSG_NOTICE(XCode version component 2: $XCodeVersion2)
+            AC_MSG_NOTICE(Xcode version component 1: $XcodeVersion1)
+            AC_MSG_NOTICE(Xcode version component 2: $XcodeVersion2)
         fi
     fi
 ])
@@ -2094,7 +2167,8 @@ AC_DEFUN([XCODE_VERSION],[
 # FIND_LLVM_PROG()
 # --------------------------------
 # Find where the llvm tools are. We have a special function to handle when they
-# are installed with a version suffix (e.g., llc-3.1).
+# are installed with a version suffix (e.g., llc-7, llc-7.0) and without (e.g.
+# llc).
 #
 # $1 = the variable to set
 # $2 = the command to look for
@@ -2102,7 +2176,7 @@ AC_DEFUN([XCODE_VERSION],[
 #
 AC_DEFUN([FIND_LLVM_PROG],[
     # Test for program with and without version name.
-    AC_CHECK_TOOLS([$1], [$2-$3 $2], [:])
+    AC_CHECK_TOOLS([$1], [$2-$3 $2-$3.0 $2], [:])
     if test "$$1" != ":"; then
         AC_MSG_CHECKING([$$1 is version $3])
         if test `$$1 --version | grep -c "version $3"` -gt 0 ; then
@@ -2178,7 +2252,7 @@ EOF
 
 # FIND_GHC_BOOTSTRAP_PROG()
 # --------------------------------
-# Parse the bootstrap GHC's compier settings file for the location of things
+# Parse the bootstrap GHC's compiler settings file for the location of things
 # like the `llc` and `opt` commands.
 #
 # $1 = the variable to set
@@ -2414,7 +2488,11 @@ AC_DEFUN([FIND_LD],[
                    FP_CC_LINKER_FLAG_TRY(bfd, $2) ;;
               "GNU gold"*)
                    FP_CC_LINKER_FLAG_TRY(gold, $2)
-                   LD_NO_GOLD=ld
+                   if test "$cross_compiling" = "yes"; then
+                       AC_MSG_NOTICE([Using ld.gold and assuming that it is not affected by binutils issue 22266]);
+                   else
+                       LD_NO_GOLD=ld;
+                   fi
                    ;;
               "LLD"*)
                    FP_CC_LINKER_FLAG_TRY(lld, $2) ;;
@@ -2447,6 +2525,17 @@ AC_DEFUN([FIND_LD],[
     fi
 
     CHECK_LD_COPY_BUG([$1])
+])
+
+# FIND_PYTHON
+# -----------
+# Find the version of `python` to use (for the testsuite driver)
+#
+AC_DEFUN([FIND_PYTHON],[
+    dnl Prefer the mingw64 distribution on Windows due to #17483.
+    AC_PATH_PROG([PYTHON], [python3], [], [/mingw64/bin $PATH])
+    PythonCmd="$PYTHON"
+    AC_SUBST([PythonCmd])
 ])
 
 # LocalWords:  fi

@@ -1,4 +1,4 @@
--- Trac #4306
+-- #4306
 -- Check that the worker for 'upd' has only one argument
 
 module T4306 where
@@ -10,3 +10,4 @@ upd (UPD _ (D x _)) = sqrt $! (x*x + x*x + sin x + x*x + x*x + cos x + x*x + x*x
                                x*x + x*x + sin x + x*x + x*x + cos x + x*x + x*x + tan x +
                                x*x + x*x + sin x + x*x + x*x + cos x + x*x + x*x + tan x)
                                -- make the rhs large enough to be worker/wrapperred
+{-# NOINLINE upd #-}

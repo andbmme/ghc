@@ -1,0 +1,248 @@
+.. _release-8-12-1:
+
+Version 8.12.1
+==============
+
+The significant changes to the various parts of the compiler are listed in the
+following sections.
+
+
+Highlights
+----------
+
+* NCG
+
+  - The linear register allocator saw improvements reducing the number
+    of redundant move instructions. Rare edge cases can see double
+    digit improvements in runtime for inner loops.
+
+    In the mean this improved runtime by about 0.8%. For details
+    see ticket :ghc-ticket:`17823`.
+
+Full details
+------------
+
+Language
+~~~~~~~~
+
+* Record field selectors are now given type signatures that preserve the
+  user-written order of quantified type variables. Moreover, field selector
+  type signatures no longer make inferred type variables avaiable for explicit
+  type application. See :ref:`field-selectors-and-type-applications` for more
+  details.
+
+  In certain situations, this will constitute a breaking change as this can
+  affect :extension:`TypeApplications`. For instance, given the following
+  definitions: ::
+
+    {-# LANGUAGE PolyKinds #-}
+
+    newtype P a = MkP { unP :: Proxy a }
+
+    newtype N :: Type -> Type -> Type where
+      MkN :: forall b a. { unN :: Either a b } -> N a b
+
+  Previous versions of GHC would give the following types to ``unP`` and
+  ``unN``: ::
+
+    unP :: forall k (a :: k). P a -> Proxy a
+    unN :: forall a b. N a b -> Either a b
+
+  GHC will now give them the following types instead: ::
+
+    unP :: forall {k} (a :: k). P a -> Proxy a
+    unN :: forall b a. N a b -> Either a b
+
+* In obscure scenarios, GHC now rejects programs it previously accepted, but
+  with unhelpful types. For example, if (with ``-XPartialTypeSignatures``) you
+  were to write ``x :: forall (f :: forall a (b :: a -> Type). b _). f _``, GHC previously
+  would have accepted ``x``, but its type would have involved the mysterious ``Any``
+  internal type family. Now, GHC rejects, explaining the situation.
+
+* GHC now more faithfully implements the instance-lookup scheme described with
+  :extension:`QuantifiedConstraints`. Previous bugs meant that programs like this
+  were accepted::
+
+    data T (c :: Type -> Constraint)
+    instance (forall h. c h => Functor h) => Functor (T c)
+    instance (forall h. c h => Applicative h) => Applicative (T c)
+
+  Note that in the instance declaration for ``Applicative (T c)``, we cannot prove
+  ``Functor (T c)``, because the quantified constraint shadows the global instance.
+  There is an easy workaround, though: just include ``Functor (T c)`` as an assumption. ::
+
+    instance (forall h. c h => Applicative h, Functor (T c)) => Applicative (T c)
+
+  There is a chance we will tweak the lookup scheme in the future, to make this
+  workaround unnecessary.
+
+* GHC now consistently does eager instantiation during type inference.
+  As a consequence, visible type application (VTA) now only works when
+  the head of the application is:
+
+  * A variable
+  * An expression with a type signature
+
+  For example ``(let x = blah in id) @Bool True`` no longer typechecks.
+  You should write ``let x = blah in id @Bool True`` instead.
+
+  This change prepares the way for `Quick Look impredicativity
+  <https://gitlab.haskell.org/ghc/ghc/issues/18126>`_.
+
+* GHC now allows users to manually define the specificity of type variable
+  binders. By marking a variable with braces ``{tyvar}`` or ``{tyvar :: kind}``,
+  it becomes inferred despite appearing in a type signature. This feature
+  effectively allows users to choose which variables can or can't be
+  instantiated through visible type application. More information can be found
+  here: :ref:`Manually-defining-inferred-variables`.
+
+Compiler
+~~~~~~~~
+
+
+GHCi
+~~~~
+
+- The ``:script`` command now allows for file names that contain spaces to
+  passed as arguments: either by enclosing the file names in double quotes or by
+  escaping spaces in file names with a backslash. (:ghc-ticket:`18027`)
+
+Runtime system
+~~~~~~~~~~~~~~
+
+- :rts-flag:`-N` without a count now tries to respect the number of processors
+  in the process's affinity mask, making GHC's behavior more predictable in
+  containerized settings (:ghc-ticket:`14781`).
+
+- Support for Windows Vista has been dropped. GHC-compiled programs now require
+  Windows 7 or later.
+
+Template Haskell
+~~~~~~~~~~~~~~~~
+
+- Implement the `Overloaded Quotations proposal (#246) <https://github.com/ghc-proposals/ghc-proposals/blob/master/proposals/0246-overloaded-bracket.rst>`_.
+  The type of all quotation forms have now been generalised in terms of a
+  minimal interface necessary (the ``Quote`` type class) for the
+  implementation rather than the overapproximation of the ``Q`` monad.
+
+- Template Haskell quotes now handle fixity declarations in ``let`` and
+  ``where`` bindings properly. Previously, such fixity declarations would
+  be dropped when quoted due to a Template Haskell bug.
+
+- The ``-XTemplateHaskellQuotes`` extension now allows nested splices as nested
+  splices do not lead directly to compile-time evaluation. (Merge request
+  `!2288 <https://gitlab.haskell.org/ghc/ghc/-/merge_requests/2288>`_)
+
+Arrow notation
+~~~~~~~~~~~~~~
+
+- When combined with :extension:`Arrows`, the :extension:`LambdaCase` extension
+  now additionally allows ``\case`` syntax to be used as a command in ``proc``
+  notation.
+
+- When combined with :extension:`Arrows`, the effects of the
+  :extension:`BlockArguments` extension now also apply to applications of
+  arrow control operators in ``(|`` banana brackets ``|)``: ::
+
+    (| untilA (increment -< x + y) do
+         within 0.5 -< x
+         ... |)
+
+``ghc-prim`` library
+~~~~~~~~~~~~~~~~~~~~
+
+- Add a known-key ``cstringLength#`` to ``GHC.CString`` that is eligible
+  for constant folding by a built-in rule.
+
+``ghc`` library
+~~~~~~~~~~~~~~~
+
+- The type of the ``getAnnotations`` function has changed to better reflect
+  the fact that it returns two different kinds of annotations, those on
+  names and those on modules: ::
+
+     getAnnotations :: Typeable a
+                    => ([Word8] -> a) -> ModGuts
+                    -> CoreM (ModuleEnv [a], NameEnv [a])
+
+- The meaning of the ``hs_fixds`` field of ``HsGroup`` has changed slightly.
+  It now only contains fixity signatures defined for top-level declarations
+  and class methods defined *outside* of the class itself. Previously,
+  ``hs_fixds`` would also contain fixity signatures for class methods defined
+  *inside* the class, such as the fixity signature for ``m`` in the following
+  example: ::
+
+    class C a where
+      infixl 4 `m`
+      m :: a -> a -> a
+
+  If you wish to attain the previous behavior of ``hs_fixds``, use the new
+  ``hsGroupTopLevelFixitySigs`` function, which collects all top-level fixity
+  signatures, including those for class methods defined inside classes.
+
+- The ``Exception`` module was boiled down acknowledging the existence of
+  the ``exceptions`` dependency. In particular, the ``ExceptionMonad``
+  class is not a proper class anymore, but a mere synonym for ``MonadThrow``,
+  ``MonadCatch``, ``MonadMask`` (all from ``exceptions``) and ``MonadIO``.
+  All of ``g*``-functions from the module (``gtry``, ``gcatch``, etc.) are
+  erased, and their ``exceptions``-alternatives are meant to be used in the
+  GHC code instead.
+
+``base`` library
+~~~~~~~~~~~~~~~~
+
+- ``ForeignPtrContents`` has a new nullary data constructor ``FinalPtr``.
+  ``FinalPtr`` is intended for turning a primitive string literal into a
+  ``ForeignPtr``.  Unlike ``PlainForeignPtr``, ``FinalPtr`` does not have
+  a finalizer. Replacing ``PlainForeignPtr`` that has ``NoFinalizers`` with
+  ``FinalPtr`` reduces allocations, reduces the size of compiled binaries,
+  and unlocks important Core-to-Core optimizations. ``FinalPtr`` will be used
+  in an upcoming ``bytestring`` release to improve the performance of
+  ``ByteString`` literals created with ``OverloadedStrings``.
+
+Build system
+~~~~~~~~~~~~
+
+Included libraries
+------------------
+
+The package database provided with this distribution also contains a number of
+packages other than GHC itself. See the changelogs provided with these packages
+for further change information.
+
+.. ghc-package-list::
+
+    libraries/array/array.cabal:             Dependency of ``ghc`` library
+    libraries/base/base.cabal:               Core library
+    libraries/binary/binary.cabal:           Dependency of ``ghc`` library
+    libraries/bytestring/bytestring.cabal:   Dependency of ``ghc`` library
+    libraries/Cabal/Cabal/Cabal.cabal:       Dependency of ``ghc-pkg`` utility
+    libraries/containers/containers/containers.cabal:   Dependency of ``ghc`` library
+    libraries/deepseq/deepseq.cabal:         Dependency of ``ghc`` library
+    libraries/directory/directory.cabal:     Dependency of ``ghc`` library
+    libraries/exceptions/exceptions.cabal:   Dependency of ``ghc`` and ``haskeline`` library
+    libraries/filepath/filepath.cabal:       Dependency of ``ghc`` library
+    compiler/ghc.cabal:                      The compiler itself
+    libraries/ghci/ghci.cabal:               The REPL interface
+    libraries/ghc-boot/ghc-boot.cabal:       Internal compiler library
+    libraries/ghc-boot-th/ghc-boot-th.cabal: Internal compiler library
+    libraries/ghc-compact/ghc-compact.cabal: Core library
+    libraries/ghc-heap/ghc-heap.cabal:       GHC heap-walking library
+    libraries/ghc-prim/ghc-prim.cabal:       Core library
+    libraries/haskeline/haskeline.cabal:     Dependency of ``ghci`` executable
+    libraries/hpc/hpc.cabal:                 Dependency of ``hpc`` executable
+    libraries/integer-gmp/integer-gmp.cabal: Core library
+    libraries/libiserv/libiserv.cabal:       Internal compiler library
+    libraries/mtl/mtl.cabal:                 Dependency of ``Cabal`` library
+    libraries/parsec/parsec.cabal:           Dependency of ``Cabal`` library
+    libraries/pretty/pretty.cabal:           Dependency of ``ghc`` library
+    libraries/process/process.cabal:         Dependency of ``ghc`` library
+    libraries/stm/stm.cabal:                 Dependency of ``haskeline`` library
+    libraries/template-haskell/template-haskell.cabal:     Core library
+    libraries/terminfo/terminfo.cabal:       Dependency of ``haskeline`` library
+    libraries/text/text.cabal:               Dependency of ``Cabal`` library
+    libraries/time/time.cabal:               Dependency of ``ghc`` library
+    libraries/transformers/transformers.cabal: Dependency of ``ghc`` library
+    libraries/unix/unix.cabal:               Dependency of ``ghc`` library
+    libraries/Win32/Win32.cabal:             Dependency of ``ghc`` library
+    libraries/xhtml/xhtml.cabal:             Dependency of ``haddock`` executable

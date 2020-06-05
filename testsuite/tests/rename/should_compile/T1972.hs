@@ -1,10 +1,10 @@
 {-# OPTIONS_GHC -fwarn-name-shadowing -fwarn-unused-binds #-}
 
--- Trac #1972
+-- #1972
 
 module Temp where
 
-import Data.List
+import Data.List (mapAccumL)
 
 data Data = Data {name :: String}
 

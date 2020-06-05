@@ -1,4 +1,4 @@
-cabal-version: 2.1
+cabal-version: 3.0
 name: rts
 version: 1.0
 license: BSD-3-Clause
@@ -28,6 +28,8 @@ flag leading-underscore
   default: @CabalLeadingUnderscore@
 flag smp
   default: True
+flag find-ptr
+  default: False
 -- Some cabal flags used to control the flavours we want to produce
 -- for libHSrts in hadrian. By default, we just produce vanilla and
 -- threaded. The flags "compose": if you enable debug and profiling,
@@ -38,6 +40,8 @@ flag profiling
 flag debug
   default: False
 flag logging
+  default: False
+flag dynamic
   default: False
 
 library
@@ -65,8 +69,14 @@ library
         extra-library-flavours: _debug_p _thr_debug_p
     if flag(debug)
       extra-library-flavours: _debug _thr_debug
+      if flag(dynamic)
+        extra-dynamic-library-flavours: _debug _thr_debug
     if flag(logging)
       extra-library-flavours: _l _thr_l
+      if flag(dynamic)
+        extra-dynamic-library-flavours: _l _thr_l
+    if flag(dynamic)
+      extra-dynamic-library-flavours: _thr
 
     exposed: True
     exposed-modules:
@@ -105,6 +115,7 @@ library
 
     include-dirs: build ../includes includes
                   includes/dist-derivedconstants/header @FFIIncludeDir@
+                  @LibdwIncludeDir@
     includes: Stg.h
     install-includes: Cmm.h HsFFI.h MachDeps.h Rts.h RtsAPI.h Stg.h
                       ghcautoconf.h ghcconfig.h ghcplatform.h ghcversion.h
@@ -129,6 +140,7 @@ library
                       rts/Linker.h
                       rts/Main.h
                       rts/Messages.h
+                      rts/NonMoving.h
                       rts/OSThreads.h
                       rts/Parallel.h
                       rts/PrimFloat.h
@@ -158,12 +170,11 @@ library
                       rts/storage/MBlock.h
                       rts/storage/TSO.h
                       stg/DLL.h
-                      stg/HaskellMachRegs.h
                       stg/MachRegs.h
+                      stg/MachRegsForHost.h
                       stg/MiscClosures.h
                       stg/Prim.h
                       stg/Regs.h
-                      stg/RtsMachRegs.h
                       stg/SMP.h
                       stg/Ticky.h
                       stg/Types.h
@@ -207,7 +218,6 @@ library
          "-Wl,-u,_base_GHCziIOziException_cannotCompactFunction_closure"
          "-Wl,-u,_base_GHCziIOziException_cannotCompactPinned_closure"
          "-Wl,-u,_base_GHCziIOziException_cannotCompactMutable_closure"
-         "-Wl,-u,_base_ControlziExceptionziBase_absentSumFieldError_closure"
          "-Wl,-u,_base_ControlziExceptionziBase_nonTermination_closure"
          "-Wl,-u,_base_ControlziExceptionziBase_nestedAtomically_closure"
          "-Wl,-u,_base_GHCziEventziThread_blockedOnBadFD_closure"
@@ -260,9 +270,12 @@ library
          "-Wl,-u,_hs_atomicwrite8"
          "-Wl,-u,_hs_atomicwrite16"
          "-Wl,-u,_hs_atomicwrite32"
-         -- This symbol is useful in gdb, but not referred to anywhere,
-         -- so we need to force it to be included in the binary.
-         "-Wl,-u,_findPtr"
+
+      if flag(find-ptr)
+        -- This symbol is useful in gdb, but not referred to anywhere,
+        -- so we need to force it to be included in the binary.
+        ld-options: "-Wl,-u,_findPtr"
+
     else
       ld-options:
          "-Wl,-u,base_GHCziTopHandler_runIO_closure"
@@ -280,7 +293,6 @@ library
          "-Wl,-u,base_GHCziIOziException_cannotCompactFunction_closure"
          "-Wl,-u,base_GHCziIOziException_cannotCompactPinned_closure"
          "-Wl,-u,base_GHCziIOziException_cannotCompactMutable_closure"
-         "-Wl,-u,base_ControlziExceptionziBase_absentSumFieldError_closure"
          "-Wl,-u,base_ControlziExceptionziBase_nonTermination_closure"
          "-Wl,-u,base_ControlziExceptionziBase_nestedAtomically_closure"
          "-Wl,-u,base_GHCziEventziThread_blockedOnBadFD_closure"
@@ -333,9 +345,11 @@ library
          "-Wl,-u,hs_atomicwrite8"
          "-Wl,-u,hs_atomicwrite16"
          "-Wl,-u,hs_atomicwrite32"
-         -- This symbol is useful in gdb, but not referred to anywhere,
-         -- so we need to force it to be included in the binary.
-         "-Wl,-u,findPtr"
+
+      if flag(find-ptr)
+        -- This symbol is useful in gdb, but not referred to anywhere,
+        -- so we need to force it to be included in the binary.
+        ld-options: "-Wl,-u,findPtr"
 
     if os(osx)
       ld-options: "-Wl,-search_paths_first"
@@ -356,7 +370,7 @@ library
 
     if arch(i386) || arch(powerpc) || arch(powerpc64)
        asm-sources: AdjustorAsm.S
-    if arch(powerpc) || arch(powerpc64) || arch(powerpc64le)
+    if arch(powerpc) || arch(powerpc64) || arch(powerpc64le) || arch(s390x)
        asm-sources: StgCRunAsm.S
 
     c-sources: Adjustor.c
@@ -416,6 +430,7 @@ library
                Timer.c
                TopHandler.c
                Trace.c
+               TraverseHeap.c
                WSDeque.c
                Weak.c
                eventlog/EventLog.c
@@ -450,6 +465,12 @@ library
                sm/GCUtils.c
                sm/MBlock.c
                sm/MarkWeak.c
+               sm/NonMoving.c
+               sm/NonMovingCensus.c
+               sm/NonMovingMark.c
+               sm/NonMovingScav.c
+               sm/NonMovingShortcut.c
+               sm/NonMovingSweep.c
                sm/Sanity.c
                sm/Scav.c
                sm/Scav_thr.c

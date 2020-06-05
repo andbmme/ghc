@@ -668,3 +668,14 @@ T12955:
 T12971:
 	mkdir -p ä
 	TMP=ä "$(TEST_HC)" $(TEST_HC_OPTS) --make T12971
+
+.PHONY: T14452
+T14452:
+	"$(TEST_HC)" $(TEST_HC_OPTS) -v -c -O2 T14452.hs 2>&1 | grep 'O3' \
+	| awk 'NF{print $$NF; exit}' | sed 's/\"//g'
+	# awk: extract last word of line, sed: remove quotes
+
+.PHONY: T17786
+T17786:
+	# N.B. Check for the presence of caret diagnostics.
+	"$(TEST_HC)" $(TEST_HC_OPTS) -v "$(shell cygpath -w -a T17786.hs)" 2>&1 | grep --quiet '3 |'

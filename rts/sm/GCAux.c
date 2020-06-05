@@ -60,6 +60,14 @@ isAlive(StgClosure *p)
     // ignore closures in generations that we're not collecting.
     bd = Bdescr((P_)q);
 
+    // isAlive is used when scavenging moving generations, before the mark
+    // phase. Because we don't know alive-ness of objects before the mark phase
+    // we have to conservatively treat objects in the non-moving generation as
+    // alive here.
+    if (bd->flags & BF_NONMOVING) {
+        return p;
+    }
+
     // if it's a pointer into to-space, then we're done
     if (bd->flags & BF_EVACUATED) {
         return p;
@@ -83,6 +91,7 @@ isAlive(StgClosure *p)
     }
 
     info = INFO_PTR_TO_STRUCT(info);
+    load_load_barrier();
 
     switch (info->type) {
 
@@ -114,16 +123,21 @@ isAlive(StgClosure *p)
 void
 revertCAFs( void )
 {
-    StgIndStatic *c;
+    StgIndStatic *c = revertible_caf_list;
 
-    for (c = revertible_caf_list;
-         c != (StgIndStatic *)END_OF_CAF_LIST;
-         c = (StgIndStatic *)c->static_link)
-    {
+    while (c != (StgIndStatic *) END_OF_CAF_LIST) {
         c = (StgIndStatic *)UNTAG_STATIC_LIST_PTR(c);
+        StgIndStatic *next = (StgIndStatic *) c->static_link;
+
         SET_INFO((StgClosure *)c, c->saved_info);
         c->saved_info = NULL;
-        // could, but not necessary: c->static_link = NULL;
+        // We must reset static_link lest the major GC finds that
+        // static_flag==3 and will consequently ignore references
+        // into code that we are trying to unload. This would result
+        // in reachable object code being unloaded prematurely.
+        // See #16842.
+        c->static_link = NULL;
+        c = next;
     }
     revertible_caf_list = (StgIndStatic*)END_OF_CAF_LIST;
 }
@@ -134,14 +148,14 @@ markCAFs (evac_fn evac, void *user)
     StgIndStatic *c;
 
     for (c = dyn_caf_list;
-         c != (StgIndStatic*)END_OF_CAF_LIST;
+         ((StgWord) c | STATIC_FLAG_LIST) != (StgWord)END_OF_CAF_LIST;
          c = (StgIndStatic *)c->static_link)
     {
         c = (StgIndStatic *)UNTAG_STATIC_LIST_PTR(c);
         evac(user, &c->indirectee);
     }
     for (c = revertible_caf_list;
-         c != (StgIndStatic*)END_OF_CAF_LIST;
+         ((StgWord) c | STATIC_FLAG_LIST) != (StgWord)END_OF_CAF_LIST;
          c = (StgIndStatic *)c->static_link)
     {
         c = (StgIndStatic *)UNTAG_STATIC_LIST_PTR(c);

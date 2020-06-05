@@ -18,7 +18,7 @@ OSThreadId ids[THREADS];
 // -----------------------------------------------------------------------------
 // version of stealWSDeque() that logs its actions, for debugging
 
-#ifdef DEBUG
+#if defined(DEBUG)
 
 #define BUF 128
 
@@ -50,14 +50,17 @@ myStealWSDeque_ (WSDeque *q, uint32_t n)
     // concurrent popWSQueue() operation.
     if ((long)b - (long)t <= 0 ) { 
         return NULL; /* already looks empty, abort */
-  }
-    
+    }
+    // NB. the load of q->bottom must be ordered before the load of
+    // q->elements[t & q-> moduloSize]. See comment "KG:..." below
+    // and Ticket #13633.
+    load_load_barrier();
     /* now access array, see pushBottom() */
     stolen = q->elements[t & q->moduloSize];
     
     /* now decide whether we have won */
     if ( !(CASTOP(&(q->top),t,t+1)) ) {
-        /* lost the race, someon else has changed top in the meantime */
+        /* lost the race, someone else has changed top in the meantime */
         return NULL;
     }  /* else: OK, top has been incremented by the cas call */
 
@@ -125,7 +128,7 @@ void OSThreadProcAttr thief(void *info)
     n = (StgWord)info;
 
     while (!done) {
-#ifdef DEBUG
+#if defined(DEBUG)
         p = myStealWSDeque(q,n);
 #else
         p = stealWSDeque(q);
@@ -160,7 +163,7 @@ int main(int argc, char*argv[])
         pushWSDeque(q,&scratch[n]);
     }
 
-#ifdef DEBUG
+#if defined(DEBUG)
     debugBelch("main thread finished, popped %d", count);
 #endif
     exit(0);

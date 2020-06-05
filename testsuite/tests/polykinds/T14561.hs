@@ -6,9 +6,9 @@
 module T14561 where
 
 import GHC.Types
-import GHC.Prim
+import Unsafe.Coerce
 
-badId :: forall (a :: TYPE r). a -> a
+badId :: forall r (a :: TYPE r). a -> a
 badId = unsafeCoerce#
 -- Un-saturated application of a levity-polymorphic
 -- function that must be eta-expanded

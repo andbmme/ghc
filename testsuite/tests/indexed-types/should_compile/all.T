@@ -39,7 +39,7 @@ test('Records', normal, compile, [''])
 # The point about this test is that it compiles NewTyCo1 and NewTyCo2
 # *separately*
 #
-test('NewTyCo', [], run_command, ['$MAKE -s --no-print-directory NewTyCo'])
+test('NewTyCo', [], makefile_test, ['NewTyCo'])
 
 test('Infix', normal, compile, [''])
 test('Kind', normal, compile, [''])
@@ -94,6 +94,9 @@ test('GivenCheckSwap', normal, compile, [''])
 test('GivenCheckDecomp', normal, compile, [''])
 test('GivenCheckTop', normal, compile, [''])
 
+test('ExplicitForAllFams1', normal, compile, [''])
+test('ExplicitForAllFams2', normal, compile, ['-Wunused-foralls -Wunused-type-patterns'])
+
 # A very delicate test
 test('Gentle', normal, compile, [''])
 
@@ -107,7 +110,7 @@ test('T2448', normal, compile, [''])
 test('T2291', normal, compile, [''])
 test('T2639', normal, compile, [''])
 test('T2944', normal, compile, [''])
-test('T3017', normal, compile, ['-ddump-types'])
+test('T3017', normalise_version('base','ghc-prim'), compile, ['-ddump-types'])
 test('TF_GADT', normal, compile, [''])
 test('T2203b', normal, compile, [''])
 test('T2767', normal, compile, [''])
@@ -127,8 +130,7 @@ test('IndTypesPerf',
        extra_clean(['IndTypesPerf.o', 'IndTypesPerf.hi',
                     'IndTypesPerfMerge.o', 'IndTypesPerfMerge.hi'])
      ] ,
-     run_command,
-     ['$MAKE -s --no-print-directory IndTypesPerf'])
+     makefile_test, ['IndTypesPerf'])
 
 test('T4120', normal, compile, [''])
 test('T3787', normal, compile, [''])
@@ -168,13 +170,9 @@ test('HO', normal, compile, [''])
 
 # The point about this test is that it compiles the two T5955
 # modules *separately*
-test('T5955', [], run_command, ['$MAKE -s --no-print-directory T5955'])
+test('T5955', [], makefile_test, ['T5955'])
 
-test('T6152',
-     normal,
-     run_command,
-     ['$MAKE -s --no-print-directory T6152'])
-
+test('T6152', normal, makefile_test, ['T6152'])
 test('T7082', normal, compile, [''])
 
 test('Overlap1', normal, compile, [''])
@@ -203,22 +201,13 @@ test('T7837', normal, compile,
 test('T4185', normal, compile, [''])
 
 # Caused infinite loop in the compiler
-test('T8002',
-     normal,
-     run_command,
-     ['$MAKE -s --no-print-directory T8002'])
+test('T8002', normal, makefile_test, ['T8002'])
 
 # Import and export of associated types
-test('T8011',
-     normal,
-     run_command,
-     ['$MAKE -s --no-print-directory T8011'])
+test('T8011', normal, makefile_test, ['T8011'])
 
 # Marshalling of associated types
-test('T8500',
-     normal,
-     run_command,
-     ['$MAKE -s --no-print-directory T8500'])
+test('T8500', normal, makefile_test, ['T8500'])
 
 test('T8018', normal, compile, [''])
 test('T8020', normal, compile, [''])
@@ -256,7 +245,7 @@ test('T10318', normal, compile, [''])
 test('UnusedTyVarWarnings', normal, compile, ['-Wunused-type-patterns'])
 test('UnusedTyVarWarningsNamedWCs', normal, compile, ['-Wunused-type-patterns'])
 test('T11408', normal, compile, [''])
-test('T11361', normal, compile, ['-dunique-increment=-1'])
+test('T11361', normal, compile, ['-dunique-increment=-1 -dinitial-unique=16777215'])
   # -dunique-increment=-1 doesn't work inside the file
 test('T11361a', normal, compile_fail, [''])
 test('T11581', normal, compile, [''])
@@ -291,3 +280,19 @@ test('T15322a', normal, compile_fail, [''])
 test('T15142', normal, compile, [''])
 test('T15352', normal, compile, [''])
 test('T15664', normal, compile, [''])
+test('T15943', normal, compile, [''])
+test('T15704', normal, compile, [''])
+test('T15711', normal, compile, ['-ddump-types'])
+test('T15852', normal, compile, ['-ddump-types'])
+test('T15764a', normal, compile, [''])
+test('T15740a', normal, compile, [''])
+test('T16110_Compile', normal, compile, [''])
+test('T16356_Compile1', normal, compile, [''])
+test('T16356_Compile2', normal, compile, [''])
+test('T16632', normal, compile, ['-Wunused-type-patterns -fdiagnostics-show-caret'])
+test('T16828', normal, compile, [''])
+test('T17008b', normal, compile, [''])
+test('T17056', normal, compile, [''])
+test('T17405', normal, multimod_compile, ['T17405c', '-v0'])
+test('T17923', normal, compile, [''])
+test('T18065', normal, compile, ['-O'])

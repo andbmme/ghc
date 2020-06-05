@@ -1,5 +1,10 @@
----Problems (should be empty list)---
+---Unattached Annotation Problems (should be empty list)---
 []
+---Ann before enclosing span problem (should be empty list)---
+[
+
+]
+
 ---Annotations-----------------------
 -- SrcSpan the annotation is attached to, AnnKeywordId,
 --    list of locations the keyword item appears in
@@ -44,7 +49,8 @@
 ((Test11332.hs:15:1-13,AnnSemi), [Test11332.hs:17:1]),
 ((Test11332.hs:17:1-13,AnnEqual), [Test11332.hs:17:11]),
 ((Test11332.hs:17:1-13,AnnPattern), [Test11332.hs:17:1-7]),
-((Test11332.hs:17:1-13,AnnSemi), [Test11332.hs:18:1]),
-((<no location info>,AnnEofPos), [Test11332.hs:18:1])
+((Test11332.hs:17:1-13,AnnSemi), [Test11332.hs:18:1])
 ]
 
+---Eof Position (should be Just)-----
+Just SrcSpanPoint "Test11332.hs" 18 1

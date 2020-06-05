@@ -92,9 +92,6 @@ loop:
         debugTraceCap(DEBUG_sched, cap, "message: throwTo %ld -> %ld",
                       (W_)t->source->id, (W_)t->target->id);
 
-        ASSERT(t->source->why_blocked == BlockedOnMsgThrowTo);
-        ASSERT(t->source->block_info.closure == (StgClosure *)m);
-
         r = throwToMsg(cap, t);
 
         switch (r) {
@@ -173,6 +170,7 @@ uint32_t messageBlackHole(Capability *cap, MessageBlackHole *msg)
                   "blackhole %p", (W_)msg->tso->id, msg->bh);
 
     info = bh->header.info;
+    load_load_barrier();  // See Note [Heap memory barriers] in SMP.h
 
     // If we got this message in our inbox, it might be that the
     // BLACKHOLE has already been updated, and GC has shorted out the
@@ -196,6 +194,7 @@ loop:
     // and turns this into an infinite loop.
     p = UNTAG_CLOSURE((StgClosure*)VOLATILE_LOAD(&((StgInd*)bh)->indirectee));
     info = p->header.info;
+    load_load_barrier();  // See Note [Heap memory barriers] in SMP.h
 
     if (info == &stg_IND_info)
     {
@@ -226,7 +225,6 @@ loop:
         bq = (StgBlockingQueue*)allocate(cap, sizeofW(StgBlockingQueue));
 
         // initialise the BLOCKING_QUEUE object
-        SET_HDR(bq, &stg_BLOCKING_QUEUE_DIRTY_info, CCS_SYSTEM);
         bq->bh = bh;
         bq->queue = msg;
         bq->owner = owner;
@@ -238,8 +236,13 @@ loop:
         // a collision to update a BLACKHOLE and a BLOCKING_QUEUE
         // becomes orphaned (see updateThunk()).
         bq->link = owner->bq;
+        SET_HDR(bq, &stg_BLOCKING_QUEUE_DIRTY_info, CCS_SYSTEM);
+        // We are about to make the newly-constructed message visible to other cores;
+        // a barrier is necessary to ensure that all writes are visible.
+        // See Note [Heap memory barriers] in SMP.h.
+        write_barrier();
+        dirty_TSO(cap, owner); // we will modify owner->bq
         owner->bq = bq;
-        dirty_TSO(cap, owner); // we modified owner->bq
 
         // If the owner of the blackhole is currently runnable, then
         // bump it to the front of the run queue.  This gives the
@@ -255,7 +258,10 @@ loop:
         }
 
         // point to the BLOCKING_QUEUE from the BLACKHOLE
-        write_barrier(); // make the BQ visible
+        write_barrier(); // make the BQ visible, see Note [Heap memory barriers].
+        IF_NONMOVING_WRITE_BARRIER_ENABLED {
+            updateRemembSetPushClosure(cap, (StgClosure*)p);
+        }
         ((StgInd*)bh)->indirectee = (StgClosure *)bq;
         recordClosureMutated(cap,bh); // bh was mutated
 
@@ -284,12 +290,21 @@ loop:
         }
 #endif
 
+        IF_NONMOVING_WRITE_BARRIER_ENABLED {
+            // We are about to overwrite bq->queue; make sure its current value
+            // makes it into the update remembered set
+            updateRemembSetPushClosure(cap, (StgClosure*)bq->queue);
+        }
         msg->link = bq->queue;
         bq->queue = msg;
+        // No barrier is necessary here: we are only exposing the
+        // closure to the GC. See Note [Heap memory barriers] in SMP.h.
         recordClosureMutated(cap,(StgClosure*)msg);
 
         if (info == &stg_BLOCKING_QUEUE_CLEAN_info) {
             bq->header.info = &stg_BLOCKING_QUEUE_DIRTY_info;
+            // No barrier is necessary here: we are only exposing the
+            // closure to the GC. See Note [Heap memory barriers] in SMP.h.
             recordClosureMutated(cap,(StgClosure*)bq);
         }
 

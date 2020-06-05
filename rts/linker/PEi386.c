@@ -105,7 +105,7 @@
       contain the name of the actual dll to load. This will be the only content
       of the section. In the symbol table, the last symbol will be the name
       used to refer to the dll in the relocation tables. This name will always
-      be in the format "symbol_name_iname", however when refered to, the format
+      be in the format "symbol_name_iname", however when referred to, the format
       "_head_symbol_name" is used.
 
       We record this symbol early on during GetNames and load the dll and use
@@ -187,6 +187,7 @@
 #include "GetEnv.h"
 #include "linker/PEi386.h"
 #include "linker/PEi386Types.h"
+#include "linker/SymbolExtras.h"
 #include "LinkerInternals.h"
 
 #include <windows.h>
@@ -274,6 +275,12 @@ const int pe_alignments_cnt = sizeof (pe_alignments) / sizeof (Alignments);
 const int default_alignment = 8;
 const int initHeapSizeMB    = 15;
 static HANDLE code_heap     = NULL;
+
+/* See Note [_iob_func symbol]
+   In order to emulate __iob_func the memory location needs to point the
+   location of the I/O structures in memory.  As such we need RODATA to contain
+   the pointer as a redirect.  Essentially it's a DATA DLL reference.  */
+const void* __rts_iob_func = (void*)&__acrt_iob_func;
 
 /* Low Fragmentation Heap, try to prevent heap from increasing in size when
    space can simply be reclaimed.  These are enums missing from mingw-w64's
@@ -758,7 +765,7 @@ pathchar* findSystemLibrary_PEi386( pathchar* dll_name )
 HsPtr addLibrarySearchPath_PEi386(pathchar* dll_path)
 {
     HINSTANCE hDLL = LoadLibraryW(L"Kernel32.DLL");
-    LPAddDLLDirectory AddDllDirectory = (LPAddDLLDirectory)GetProcAddress((HMODULE)hDLL, "AddDllDirectory");
+    LPAddDLLDirectory AddDllDirectory = (LPAddDLLDirectory)(void*)GetProcAddress((HMODULE)hDLL, "AddDllDirectory");
 
     HsPtr result = NULL;
 
@@ -769,12 +776,12 @@ HsPtr addLibrarySearchPath_PEi386(pathchar* dll_path)
     WCHAR* abs_path = malloc(sizeof(WCHAR) * init_buf_size);
     DWORD wResult = GetFullPathNameW(dll_path, bufsize, abs_path, NULL);
     if (!wResult){
-        sysErrorBelch("addLibrarySearchPath[GetFullPathNameW]: %" PATH_FMT " (Win32 error %lu)", dll_path, GetLastError());
+        IF_DEBUG(linker, debugBelch("addLibrarySearchPath[GetFullPathNameW]: %" PATH_FMT " (Win32 error %lu)", dll_path, GetLastError()));
     }
     else if (wResult > init_buf_size) {
         abs_path = realloc(abs_path, sizeof(WCHAR) * wResult);
         if (!GetFullPathNameW(dll_path, bufsize, abs_path, NULL)) {
-            sysErrorBelch("addLibrarySearchPath[GetFullPathNameW]: %" PATH_FMT " (Win32 error %lu)", dll_path, GetLastError());
+            IF_DEBUG(linker, debugBelch("addLibrarySearchPath[GetFullPathNameW]: %" PATH_FMT " (Win32 error %lu)", dll_path, GetLastError()));
         }
     }
 
@@ -828,7 +835,7 @@ bool removeLibrarySearchPath_PEi386(HsPtr dll_path_index)
 
     if (dll_path_index != NULL) {
         HINSTANCE hDLL = LoadLibraryW(L"Kernel32.DLL");
-        LPRemoveDLLDirectory RemoveDllDirectory = (LPRemoveDLLDirectory)GetProcAddress((HMODULE)hDLL, "RemoveDllDirectory");
+        LPRemoveDLLDirectory RemoveDllDirectory = (LPRemoveDLLDirectory)(void*)GetProcAddress((HMODULE)hDLL, "RemoveDllDirectory");
 
         if (RemoveDllDirectory) {
             result = RemoveDllDirectory(dll_path_index);
@@ -1248,7 +1255,7 @@ ocVerifyImage_PEi386 ( ObjectCode* oc )
          */
         COFF_reloc* rel = (COFF_reloc*)
                            myindex ( sizeof_COFF_reloc, reltab, 0 );
-        noRelocs = rel->VirtualAddress;
+        noRelocs = rel->VirtualAddress - 1;
         relocs_offset = 1;
       } else {
         noRelocs = sectab_i->NumberOfRelocations;
@@ -1437,8 +1444,8 @@ ocGetNames_PEi386 ( ObjectCode* oc )
 {
    bool has_code_section = false;
 
-   SymbolName* sname;
-   SymbolAddr* addr;
+   SymbolName* sname = NULL;
+   SymbolAddr* addr = NULL;
    unsigned int   i;
 
    COFF_HEADER_INFO *info = oc->info->ch_info;
@@ -1528,7 +1535,7 @@ ocGetNames_PEi386 ( ObjectCode* oc )
           }
           setImportSymbol (oc, sname);
 
-          /* Don't process this oc any futher. Just exit.  */
+          /* Don't process this oc any further. Just exit.  */
           oc->n_symbols = 0;
           oc->symbols   = NULL;
           stgFree (oc->image);
@@ -1567,11 +1574,10 @@ ocGetNames_PEi386 ( ObjectCode* oc )
             Allocate zeroed space for it */
         bss_sz = section.info->virtualSize;
         if (bss_sz < section.size) { bss_sz = section.size; }
-        bss_sz = section.info->alignment;
         zspace = stgCallocBytes(1, bss_sz, "ocGetNames_PEi386(anonymous bss)");
-        oc->sections[i].start = getAlignedMemory(zspace, section);
+        oc->sections[i].start = zspace;
         oc->sections[i].size  = bss_sz;
-        addProddableBlock(oc, zspace, bss_sz);
+        section  = oc->sections[i];
         /* debugBelch("BSS anon section at 0x%x\n", zspace); */
       }
 
@@ -1592,9 +1598,9 @@ ocGetNames_PEi386 ( ObjectCode* oc )
       if (sz < section.info->virtualSize) sz = section.info->virtualSize;
 
       start = section.start;
-      end   = start + sz - 1;
+      end   = start + sz;
 
-      if (kind != SECTIONKIND_OTHER && end >= start) {
+      if (kind != SECTIONKIND_OTHER && end > start) {
           /* See Note [Section alignment].  */
           addCopySection(oc, &oc->sections[i], kind, SECTION_NOMEM, start, sz);
           addProddableBlock(oc, oc->sections[i].start, sz);
@@ -1604,7 +1610,7 @@ ocGetNames_PEi386 ( ObjectCode* oc )
    /* Copy exported symbols into the ObjectCode. */
 
    oc->n_symbols = info->numberOfSymbols;
-   oc->symbols   = stgCallocBytes(sizeof(SymbolName*), oc->n_symbols,
+   oc->symbols   = stgCallocBytes(sizeof(Symbol_t), oc->n_symbols,
                                   "ocGetNames_PEi386(oc->symbols)");
 
    /* Work out the size of the global BSS section */
@@ -1751,7 +1757,8 @@ ocGetNames_PEi386 ( ObjectCode* oc )
          sname = strdup (sname);
          IF_DEBUG(linker, debugBelch("addSymbol %p `%s'\n", addr, sname));
          ASSERT(i < (uint32_t)oc->n_symbols);
-         oc->symbols[i] = sname;
+         oc->symbols[i].name = sname;
+         oc->symbols[i].addr = addr;
          if (isWeak) {
              setWeakSymbol(oc, sname);
          }
@@ -1762,7 +1769,8 @@ ocGetNames_PEi386 ( ObjectCode* oc )
       } else {
           /* We're skipping the symbol, but if we ever load this
           object file we'll want to skip it then too. */
-          oc->symbols[i] = NULL;
+          oc->symbols[i].name = NULL;
+          oc->symbols[i].addr = NULL;
       }
 
       i += getSymNumberOfAuxSymbols (info, sym);
@@ -1777,7 +1785,7 @@ ocGetNames_PEi386 ( ObjectCode* oc )
  * so simply set correct pointer here.
  */
 bool
-ocAllocateSymbolExtras_PEi386 ( ObjectCode* oc )
+ocAllocateExtras_PEi386 ( ObjectCode* oc )
 {
    /* If the ObjectCode was unloaded we don't need a trampoline, it's likely
       an import library so we're discarding it earlier.  */
@@ -1818,6 +1826,8 @@ makeSymbolExtra_PEi386( ObjectCode* oc, uint64_t index, size_t s, char* symbol )
 
     return (size_t)extra->jumpIsland;
 }
+
+void ocProtectExtras(ObjectCode* oc STG_UNUSED) { }
 
 #endif /* x86_64_HOST_ARCH */
 
@@ -1960,14 +1970,14 @@ ocResolve_PEi386 ( ObjectCode* oc )
                {
                    intptr_t v;
                    v = S + (int32_t)A - ((intptr_t)pP) - 4;
-                   if ((v >> 32) && ((-v) >> 32)) {
+                   if ((v > (intptr_t) INT32_MAX) || (v < (intptr_t) INT32_MIN)) {
                        /* Make the trampoline then */
                        copyName (getSymShortName (info, sym),
                                  oc, symbol, sizeof(symbol)-1);
                        S = makeSymbolExtra_PEi386(oc, symIndex, S, (char *)symbol);
                        /* And retry */
                        v = S + (int32_t)A - ((intptr_t)pP) - 4;
-                       if ((v >> 32) && ((-v) >> 32)) {
+                       if ((v > (intptr_t) INT32_MAX) || (v < (intptr_t) INT32_MIN)) {
                            barf("IMAGE_REL_AMD64_REL32: High bits are set in %zx for %s",
                                 v, (char *)symbol);
                        }
@@ -2251,7 +2261,7 @@ resolveSymbolAddr_PEi386 (pathchar* buffer, int size,
                                    "resolveSymbolAddr");
       int blanks = 0;
       for (int i = 0; i < obj->n_symbols; i++) {
-          SymbolName* sym = obj->symbols[i];
+          SymbolName* sym = obj->symbols[i].name;
           if (sym == NULL)
             {
                blanks++;

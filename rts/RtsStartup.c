@@ -31,6 +31,7 @@
 #include "StaticPtrTable.h"
 #include "Hash.h"
 #include "Profiling.h"
+#include "ProfHeap.h"
 #include "Timer.h"
 #include "Globals.h"
 #include "FileLock.h"
@@ -69,7 +70,7 @@ static void flushStdHandles(void);
 
 /* -----------------------------------------------------------------------------
    Initialise floating point unit on x86 (currently disabled; See Note
-   [x86 Floating point precision] in compiler/nativeGen/X86/Instr.hs)
+   [x86 Floating point precision] in compiler/GHC/CmmToAsm/X86/Instr.hs)
    -------------------------------------------------------------------------- */
 
 #define X86_INIT_FPU 0
@@ -274,10 +275,6 @@ hs_init_ghc(int *argc, char **argv[], RtsConfig rts_config)
     getStablePtr((StgPtr)cannotCompactPinned_closure);
     getStablePtr((StgPtr)cannotCompactMutable_closure);
     getStablePtr((StgPtr)nestedAtomically_closure);
-    getStablePtr((StgPtr)absentSumFieldError_closure);
-        // `Id` for this closure is marked as non-CAFFY,
-        // see Note [aBSENT_SUM_FIELD_ERROR_ID] in MkCore.
-
     getStablePtr((StgPtr)runSparks_closure);
     getStablePtr((StgPtr)ensureIOManagerIsRunning_closure);
     getStablePtr((StgPtr)ioManagerCapabilitiesChanged_closure);
@@ -300,7 +297,10 @@ hs_init_ghc(int *argc, char **argv[], RtsConfig rts_config)
     initThreadLabelTable();
 #endif
 
+#if defined(PROFILING)
     initProfiling();
+#endif
+    initHeapProfiling();
 
     /* start the virtual timer 'subsystem'. */
     initTimer();
@@ -388,7 +388,8 @@ hs_exit_(bool wait_foreign)
     ioManagerDie();
 #endif
 
-    /* stop all running tasks */
+    /* stop all running tasks. This is also where we stop concurrent non-moving
+     * collection if it's running */
     exitScheduler(wait_foreign);
 
     /* run C finalizers for all active weak pointers */
@@ -469,8 +470,13 @@ hs_exit_(bool wait_foreign)
     reportCCSProfiling();
 #endif
 
+    endHeapProfiling();
+    freeHeapProfiling();
+
+#if defined(PROFILING)
     endProfiling();
     freeProfiling();
+#endif
 
 #if defined(PROFILING)
     // Originally, this was in report_ccs_profiling().  Now, retainer

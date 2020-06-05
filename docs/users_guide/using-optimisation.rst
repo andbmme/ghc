@@ -45,7 +45,7 @@ optimisation to be performed, which can have an impact on how much of
 your program needs to be recompiled when you change something. This is
 one reason to stick to no-optimisation when developing code.
 
-**No ``-O*``-type option specified:** This is taken to mean “Please 
+**No ``-O*``-type option specified:** This is taken to mean “Please
 compile quickly; I'm not over-bothered about compiled-code quality.”
 So, for example, ``ghc -c Foo.hs``
 
@@ -87,6 +87,17 @@ So, for example, ``ghc -c Foo.hs``
     The avoided "dangerous" optimisations are those that can make
     runtime or space *worse* if you're unlucky. They are normally turned
     on or off individually.
+
+.. ghc-flag:: -O⟨n⟩
+    :shortdesc: Any -On where n > 2 is the same as -O2.
+    :type: dynamic
+    :reverse: -O0
+    :category: optimization-levels
+
+    .. index::
+       single: optimise; aggressively
+
+    Any -On where n > 2 is the same as -O2.
 
 We don't use a ``-O*`` flag for day-to-day work. We use ``-O`` to get
 respectable speed; e.g., when we want to measure something. When we want
@@ -203,6 +214,19 @@ by saying ``-fno-wombat``.
     to their usage sites. It also inlines simple expressions like
     literals or registers.
 
+.. ghc-flag:: -fcmm-static-pred
+    :shortdesc: Enable static control flow prediction. Implied by :ghc-flag:`-O`.
+    :type: dynamic
+    :reverse: -fno-cmm-static-pred
+    :category:
+
+    :default: off but enabled with :ghc-flag:`-O`.
+
+    This enables static control flow prediction on the final Cmm
+    code. If enabled GHC will apply certain heuristics to identify
+    loops and hot code paths. This information is then used by the
+    register allocation and code layout passes.
+
 .. ghc-flag:: -fasm-shortcutting
     :shortdesc: Enable shortcutting on assembly. Implied by :ghc-flag:`-O2`.
     :type: dynamic
@@ -219,6 +243,58 @@ by saying ``-fno-wombat``.
     This is mostly done during Cmm passes. However this can miss corner cases. So at -O2
     we run the pass again at the asm stage to catch these.
 
+.. ghc-flag:: -fblock-layout-cfg
+    :shortdesc: Use the new cfg based block layout algorithm.
+    :type: dynamic
+    :reverse: -fno-block-layout-cfg
+    :category:
+
+    :default: off but enabled with :ghc-flag:`-O`.
+
+    The new algorithm considers all outgoing edges of a basic blocks for
+    code layout instead of only the last jump instruction.
+    It also builds a control flow graph for functions, tries to find
+    hot code paths and place them sequentially leading to better cache utilization
+    and performance.
+
+    This is expected to improve performance on average, but actual performance
+    difference can vary.
+
+    If you find cases of significant performance regressions, which can
+    be traced back to obviously bad code layout please open a ticket.
+
+.. ghc-flag:: -fblock-layout-weights
+    :shortdesc: Sets edge weights used by the new code layout algorithm.
+    :type: dynamic
+    :category:
+
+    This flag is hacker territory. The main purpose of this flag is to make
+    it easy to debug and tune the new code layout algorithm. There is no
+    guarantee that values giving better results now won't be worse with
+    the next release.
+
+    If you feel your code warrants modifying these settings please consult
+    the source code for default values and documentation. But I strongly
+    advise against this.
+
+.. ghc-flag:: -fblock-layout-weightless
+    :shortdesc: Ignore cfg weights for code layout.
+    :type: dynamic
+    :reverse: -fno-block-layout-weightless
+    :category:
+
+    :default: off
+
+    When not using the cfg based blocklayout layout is determined either
+    by the last jump in a basic block or the heaviest outgoing edge of the
+    block in the cfg.
+
+    With this flag enabled we use the last jump instruction in blocks.
+    Without this flags the old algorithm also uses the heaviest outgoing
+    edge.
+
+    When this flag is enabled and :ghc-flag:`-fblock-layout-cfg` is disabled
+    block layout behaves the same as in 8.6 and earlier.
 
 .. ghc-flag:: -fcpr-anal
     :shortdesc: Turn on CPR analysis in the demand analyser. Implied by :ghc-flag:`-O`.
@@ -253,7 +329,7 @@ by saying ``-fno-wombat``.
 
     Enables the common-sub-expression elimination optimisation on the STG
     intermediate language, where it is able to common up some subexpressions
-    that differ in their types, but not their represetation.
+    that differ in their types, but not their representation.
 
 .. ghc-flag:: -fdicts-cheap
     :shortdesc: Make dictionary-valued expressions seem cheap to the optimiser.
@@ -320,7 +396,7 @@ by saying ``-fno-wombat``.
     a shared-memory
     multiprocessor <http://community.haskell.org/~simonmar/papers/multiproc.pdf>`__.
 
-    See :ref:`parallel-compile-options` for a dicussion on its use.
+    See :ref:`parallel-compile-options` for a discussion on its use.
 
 .. ghc-flag:: -fexcess-precision
     :shortdesc: Enable excess intermediate precision
@@ -396,13 +472,12 @@ by saying ``-fno-wombat``.
     residency.
 
     .. note::
-       GHC doesn't implement complete full-laziness. When
-       optimisation in on, and ``-fno-full-laziness`` is not given, some
-       transformations that increase sharing are performed, such as
-       extracting repeated computations from a loop. These are the same
-       transformations that a fully lazy implementation would do, the
-       difference is that GHC doesn't consistently apply full-laziness, so
-       don't rely on it.
+        GHC doesn't implement complete full laziness. Although GHC's
+        full-laziness optimisation does enable some transformations
+        which would be performed by a fully lazy implementation (such as
+        extracting repeated computations from loops), these
+        transformations are not applied consistently, so don't rely on
+        them.
 
 .. ghc-flag:: -ffun-to-thunk
     :shortdesc: Allow worker-wrapper to convert a function closure into a thunk
@@ -457,7 +532,7 @@ by saying ``-fno-wombat``.
     that were not visible earlier; and optimisations like
     :ghc-flag:`-fspec-constr` can create functions with unused arguments which
     are eliminated by late demand analysis. Improvements are modest, but
-    so is the cost. See notes on the :ghc-wiki:`Trac wiki page <LateDmd>`.
+    so is the cost. See notes on the :ghc-wiki:`wiki page <late-dmd>`.
 
 .. ghc-flag:: -fliberate-case
     :shortdesc: Turn on the liberate-case transformation. Implied by :ghc-flag:`-O2`.
@@ -546,7 +621,7 @@ by saying ``-fno-wombat``.
     :shortdesc: *default: 6.* Set the maximum number of bindings to display in
         type error messages.
     :type: dynamic
-    :reverse: -fno-max-relevant-bindings
+    :reverse: -fno-max-relevant-binds
     :category: verbosity
 
     :default: 6
@@ -554,9 +629,9 @@ by saying ``-fno-wombat``.
     The type checker sometimes displays a fragment of the type
     environment in error messages, but only up to some maximum number,
     set by this flag. Turning it off with
-    ``-fno-max-relevant-bindings`` gives an unlimited number.
+    ``-fno-max-relevant-binds`` gives an unlimited number.
     Syntactically top-level bindings are also usually excluded (since
-    they may be numerous), but ``-fno-max-relevant-bindings`` includes
+    they may be numerous), but ``-fno-max-relevant-binds`` includes
     them too.
 
 .. ghc-flag:: -fmax-uncovered-patterns=⟨n⟩
@@ -580,14 +655,15 @@ by saying ``-fno-wombat``.
     Sets the maximal number of iterations for the simplifier.
 
 .. ghc-flag:: -fmax-worker-args=⟨n⟩
-    :shortdesc: *default: 10.* If a worker has that many arguments, none will
-        be unpacked anymore.
+    :shortdesc: *default: 10.* Maximum number of value arguments for a worker.
     :type: dynamic
     :category:
 
     :default: 10
 
-    If a worker has that many arguments, none will be unpacked anymore.
+    A function will not be split into worker and wrapper if the number of
+    value arguments of the resulting worker exceeds both that of the original
+    function and this setting.
 
 .. ghc-flag:: -fno-opt-coercion
     :shortdesc: Turn off the coercion optimiser
@@ -947,10 +1023,62 @@ by saying ``-fno-wombat``.
 
     :default: off
 
-    Turn on the static argument transformation, which turns a recursive
-    function into a non-recursive one with a local recursive loop. See
-    Chapter 7 of `Andre Santos's PhD
-    thesis <http://research.microsoft.com/en-us/um/people/simonpj/papers/santos-thesis.ps.gz>`__
+    Turn on the static argument transformation, which turns a recursive function
+    into a non-recursive one with a local recursive loop. See Chapter 7 of
+    `Andre Santos's PhD thesis
+    <https://www.microsoft.com/en-us/research/publication/compilation-transformation-non-strict-functional-languages/>`__.
+
+.. ghc-flag:: -fstg-lift-lams
+    :shortdesc: Enable late lambda lifting on the STG intermediate
+        language. Implied by :ghc-flag:`-O2`.
+    :type: dynamic
+    :reverse: -fno-stg-lift-lams
+    :category:
+
+    :default: on
+
+    Enables the late lambda lifting optimisation on the STG
+    intermediate language. This selectively lifts local functions to
+    top-level by converting free variables into function parameters.
+
+.. ghc-flag:: -fstg-lift-lams-known
+    :shortdesc: Allow turning known into unknown calls while performing
+        late lambda lifting.
+    :type: dynamic
+    :reverse: -fno-stg-lift-lams-known
+    :category:
+
+    :default: off
+
+    Allow turning known into unknown calls while performing
+    late lambda lifting. This is deemed non-beneficial, so it's
+    off by default.
+
+.. ghc-flag:: -fstg-lift-lams-non-rec-args
+    :shortdesc: Create top-level non-recursive functions with at most <n>
+        parameters while performing late lambda lifting.
+    :type: dynamic
+    :reverse: -fno-stg-lift-lams-non-rec-args-any
+    :category:
+
+    :default: 5
+
+    Create top-level non-recursive functions with at most <n> parameters
+    while performing late lambda lifting. The default is 5, the number of
+    available parameter registers on x86_64.
+
+.. ghc-flag:: -fstg-lift-lams-rec-args
+    :shortdesc: Create top-level recursive functions with at most <n>
+        parameters while performing late lambda lifting.
+    :type: dynamic
+    :reverse: -fno-stg-lift-lams-rec-args-any
+    :category:
+
+    :default: 5
+
+    Create top-level recursive functions with at most <n> parameters
+    while performing late lambda lifting. The default is 5, the number of
+    available parameter registers on x86_64.
 
 .. ghc-flag:: -fstrictness
     :shortdesc: Turn on strictness analysis.
@@ -961,8 +1089,9 @@ by saying ``-fno-wombat``.
 
     :default: on
 
-    Switch on the strictness analyser. The
-    implementation is described in the paper `Theory and Practice of Demand Analysis in Haskell`<https://www.microsoft.com/en-us/research/wp-content/uploads/2017/03/demand-jfp-draft.pdf>`__.
+    Switch on the strictness analyser. The implementation is described in the
+    paper `Theory and Practice of Demand Analysis in Haskell
+    <https://www.microsoft.com/en-us/research/wp-content/uploads/2017/03/demand-jfp-draft.pdf>`__.
 
     The strictness analyser figures out when arguments and variables in
     a function can be treated 'strictly' (that is they are always
@@ -1133,3 +1262,30 @@ by saying ``-fno-wombat``.
     if a function definition will be inlined *at a call site*. The other option
     determines if a function definition will be kept around at all for
     potential inlining.
+
+.. ghc-flag:: -fworker-wrapper
+    :shortdesc: Enable the worker-wrapper transformation.
+    :type: dynamic
+    :category:
+
+    Enable the worker-wrapper transformation after a strictness
+    analysis pass. Implied by :ghc-flag:`-O`, and by :ghc-flag:`-fstrictness`.
+    Disabled by :ghc-flag:`-fno-strictness`. Enabling :ghc-flag:`-fworker-wrapper`
+    while strictness analysis is disabled (by :ghc-flag:`-fno-strictness`)
+    has no effect.
+
+.. ghc-flag:: -fbinary-blob-threshold=⟨n⟩
+    :shortdesc: *default: 500K.* Tweak assembly generator for binary blobs.
+    :type: dynamic
+    :category: optimization
+
+    :default: 500000
+
+    The native code-generator can either dump binary blobs (e.g. string
+    literals) into the assembly file (by using ".asciz" or ".string" assembler
+    directives) or it can dump them as binary data into a temporary file which
+    is then included by the assembler (using the ".incbin" assembler directive).
+
+    This flag sets the size (in bytes) threshold above which the second approach
+    is used. You can disable the second approach entirely by setting the
+    threshold to 0.

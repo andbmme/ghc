@@ -8,17 +8,17 @@ module Main where
 
 -- import Data.Generics
 import Data.Data hiding (Fixity)
-import Data.List
+import Data.List (intercalate)
 import System.IO
 import GHC
-import BasicTypes
-import DynFlags
-import FastString
-import ForeignCall
-import MonadUtils
-import Outputable
-import HsDecls
-import Bag (filterBag,isEmptyBag)
+import GHC.Types.Basic
+import GHC.Driver.Session
+import GHC.Data.FastString
+import GHC.Types.ForeignCall
+import GHC.Utils.Monad
+import GHC.Utils.Outputable
+import GHC.Hs.Decls
+import GHC.Data.Bag (filterBag,isEmptyBag)
 import System.Directory (removeFile)
 import System.Environment( getArgs )
 import qualified Data.Map as Map
@@ -30,7 +30,7 @@ main = do
         testOneFile libdir fileName
 
 testOneFile libdir fileName = do
-       ((anns,cs),p) <- runGhc (Just libdir) $ do
+       p <- runGhc (Just libdir) $ do
                         dflags <- getSessionDynFlags
                         setSessionDynFlags dflags
                         let mn =mkModuleName fileName
@@ -40,7 +40,7 @@ testOneFile libdir fileName = do
                         load LoadAllTargets
                         modSum <- getModSummary mn
                         p <- parseModule modSum
-                        return (pm_annotations p,p)
+                        return p
 
        let tupArgs = gq (pm_parsed_source p)
 
@@ -60,14 +60,14 @@ testOneFile libdir fileName = do
 
      doRuleDecl :: RuleDecl GhcPs
                 -> [(String,[String])]
-     doRuleDecl (HsRule _ _ (ActiveBefore (SourceText ss) _) _ _ _)
+     doRuleDecl (HsRule _ _ (ActiveBefore (SourceText ss) _) _ _ _ _)
        = [("rb",[ss])]
-     doRuleDecl (HsRule _ _ (ActiveAfter (SourceText ss) _) _ _ _)
+     doRuleDecl (HsRule _ _ (ActiveAfter (SourceText ss) _) _ _ _ _)
        = [("ra",[ss])]
-     doRuleDecl (HsRule _ _ _ _ _ _) = []
+     doRuleDecl (HsRule _ _ _ _ _ _ _) = []
 
      doHsExpr :: HsExpr GhcPs -> [(String,[String])]
-     doHsExpr (HsTickPragma _ src (_,_,_) ss _) = [("tp",[show ss])]
+     doHsExpr (HsPragE _ (HsPragTick _ src (_,_,_) ss) _) = [("tp",[show ss])]
      doHsExpr _ = []
 
      doInline (InlinePragma _ _ _ (ActiveBefore (SourceText ss) _) _)

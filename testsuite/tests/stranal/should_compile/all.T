@@ -23,7 +23,7 @@ test('T8743', [], multimod_compile, ['T8743', '-v0'])
 # T10482
 #   The intent here is to check that $wfoo has type
 #         $wfoo :: Int# -> Int# -> Int
-#   with two unboxed args.  See Trac #10482 for background
+#   with two unboxed args.  See #10482 for background
 #
 # Set -dppr-cols to ensure output doesn't wrap
 test('T10482',  [ grep_errmsg(r'wfoo.*Int#') ], compile, ['-dppr-cols=200 -ddump-simpl'])
@@ -31,13 +31,27 @@ test('T10482a', [ grep_errmsg(r'wf.*Int#') ],   compile, ['-dppr-cols=200 -ddump
 
 test('T9208', when(compiler_debugged(), expect_broken(9208)), compile, [''])
 # T9208 fails (and should do so) if you have assertion checking on in the compiler
-# Hence the above expect_broken.  See comments in the Trac ticket
+# Hence the above expect_broken.  See comments in the ticket
 
-test('T10694', [ grep_errmsg(r'Str=') ],   compile, ['-dppr-cols=200 -ddump-simpl'])
+test('T10694', [ grep_errmsg(r'(Str|Cpr)=') ],   compile, ['-dppr-cols=200 -ddump-simpl -dsuppress-uniques'])
 test('T11770', [ check_errmsg('OneShot') ], compile, ['-ddump-simpl'])
 
-test('T13031', normal, run_command,
-         ['$MAKE -s --no-print-directory T13031'])
+test('T13031', normal, makefile_test, [])
 
 test('T13077', normal, compile, [''])
 test('T13077a', normal, compile, [''])
+
+# T15627
+#   Absent bindings of unlifted types should be WW'ed away.
+#   The idea is to check that both $wmutVar and $warray
+#   don't mention MutVar# and Array# anymore.
+test('T15627',  [ grep_errmsg(r'(wmutVar|warray).*Int#') ], compile, ['-dppr-cols=200 -ddump-simpl'])
+# Absent bindings of unlifted newtypes are WW’ed away.
+test('T17852',  [ grep_errmsg(r'\\$wf ::') ], compile, ['-ddump-worker-wrapper -dsuppress-idinfo'])
+
+test('T16029', normal, makefile_test, [])
+test('T10069',  [ grep_errmsg(r'(wc1).*Int#$') ], compile, ['-dppr-cols=200 -ddump-simpl'])
+test('T13380b',  [ grep_errmsg('bigDeadAction') ], compile, ['-dppr-cols=200 -ddump-simpl'])
+
+# We just want to find the worker of foo in there:
+test('T18122',  [ grep_errmsg(r'wfoo =') ], compile, ['-ddump-simpl'])

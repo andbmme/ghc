@@ -26,6 +26,94 @@
 #include <fs_rts.h>
 #include <string.h>
 
+#if defined(darwin_HOST_OS)
+#include <xlocale.h>
+#else
+#include <locale.h>
+#endif
+
+FILE *hp_file;
+static char *hp_filename; /* heap profile (hp2ps style) log file */
+
+/* ------------------------------------------------------------------------
+ * Locales
+ *
+ * The heap profile contains information that is sensitive to the C runtime's
+ * LC_NUMERIC locale settings.  By default libc starts in a "C" setting that's
+ * the same everywhere, and the one hp2ps expects.  But the program may change
+ * that at runtime.  So we change it back when we're writing a sample, and
+ * restore it before yielding back.
+ *
+ * On POSIX.1-2008 systems, this is done with the locale_t opaque type, created
+ * with newlocale() at profiler init, switched to with uselocale() and freed at
+ * exit with freelocale().
+ *
+ * As an exception for Darwin, this comes through the <xlocale.h> header instead
+ * of <locale.h>.
+ *
+ * On Windows, a different _locale_t opaque type does exist, but isn't directly
+ * usable without special-casing all printf() and related calls, which I'm not
+ * motivated to trawl through as I don't even have a Windows box to test on.
+ * (But if you do and are so inclined, be my guest!)
+ * So we just call setlocale(), making it thread-local and restoring the
+ * locale and its thread-locality state on yield.
+ * --------------------------------------------------------------------- */
+
+#if defined(mingw32_HOST_OS)
+static int prof_locale_per_thread = -1;
+static const char *saved_locale = NULL;
+#else
+static locale_t prof_locale = 0, saved_locale = 0;
+#endif
+
+STATIC_INLINE void
+init_prof_locale( void )
+{
+#if !defined(mingw32_HOST_OS)
+    if (! prof_locale) {
+        prof_locale = newlocale(LC_NUMERIC_MASK, "POSIX", 0);
+        if (! prof_locale) {
+            sysErrorBelch("Couldn't allocate heap profiler locale");
+            /* non-fatal: risk using an unknown locale, but won't crash */
+        }
+    }
+#endif
+}
+
+STATIC_INLINE void
+free_prof_locale( void )
+{
+#if !defined(mingw32_HOST_OS)
+    if (prof_locale) {
+        freelocale(prof_locale);
+        prof_locale = 0;
+    }
+#endif
+}
+
+STATIC_INLINE void
+set_prof_locale( void )
+{
+#if defined(mingw32_HOST_OS)
+    prof_locale_per_thread = _configthreadlocale(_ENABLE_PER_THREAD_LOCALE);
+    saved_locale = setlocale(LC_NUMERIC, NULL);
+    setlocale(LC_NUMERIC, "C");
+#else
+    saved_locale = uselocale(prof_locale);
+#endif
+}
+
+STATIC_INLINE void
+restore_locale( void )
+{
+#if defined(mingw32_HOST_OS)
+    _configthreadlocale(prof_locale_per_thread);
+    setlocale(LC_NUMERIC, saved_locale);
+#else
+    uselocale(saved_locale);
+#endif
+}
+
 /* -----------------------------------------------------------------------------
  * era stores the current time period.  It is the same as the
  * number of censuses that have been performed.
@@ -78,6 +166,10 @@ initLDVCtr( counter *ctr )
 
 typedef struct {
     double      time;    // the time in MUT time when the census is made
+    StgWord64   rtime;   // The eventlog time the census was made. This is used
+                         // for the LDV profiling events because they are all
+                         // emitted at the end of compilation so we need to know
+                         // when the sample actually took place.
     HashTable * hash;
     counter   * ctrs;
     Arena     * arena;
@@ -123,7 +215,7 @@ closureIdentity( const StgClosure *p )
     case HEAP_BY_RETAINER:
         // AFAIK, the only closures in the heap which might not have a
         // valid retainer set are DEAD_WEAK closures.
-        if (isRetainerSetFieldValid(p))
+        if (isTravDataValid(p))
             return retainerSetOf(p);
         else
             return NULL;
@@ -188,6 +280,8 @@ LDV_recordDead( const StgClosure *c, uint32_t size )
     uint32_t t;
     counter *ctr;
 
+    ASSERT(!isInherentlyUsed(get_itbl(c)->type));
+
     if (era > 0 && closureSatisfiesConstraints(c)) {
         size -= sizeofW(StgProfHeader);
         ASSERT(LDVW(c) != 0);
@@ -197,11 +291,13 @@ LDV_recordDead( const StgClosure *c, uint32_t size )
                 if (RtsFlags.ProfFlags.bioSelector == NULL) {
                     censuses[t].void_total   += size;
                     censuses[era].void_total -= size;
-                    ASSERT(censuses[t].void_total < censuses[t].not_used);
+                    ASSERT(censuses[t].void_total <= censuses[t].not_used);
                 } else {
                     id = closureIdentity(c);
                     ctr = lookupHashTable(censuses[t].hash, (StgWord)id);
-                    ASSERT( ctr != NULL );
+                    if (ctr == NULL)
+                        barf("LDV_recordDead: Failed to find counter for closure %p", c);
+
                     ctr->c.ldv.void_total += size;
                     ctr = lookupHashTable(censuses[era].hash, (StgWord)id);
                     if (ctr == NULL) {
@@ -309,19 +405,51 @@ nextEra( void )
  * Heap profiling by info table
  * ------------------------------------------------------------------------- */
 
-#if !defined(PROFILING)
-FILE *hp_file;
-static char *hp_filename;
-
-void freeProfiling (void)
+static void
+printEscapedString(const char* string)
 {
+    for (const char* p = string; *p != '\0'; ++p) {
+        if (*p == '\"') {
+            // Escape every " as ""
+            fputc('"', hp_file);
+        }
+        fputc(*p, hp_file);
+    }
 }
 
-void initProfiling (void)
+static void
+printSample(bool beginSample, StgDouble sampleValue)
 {
+    fprintf(hp_file, "%s %f\n",
+            (beginSample ? "BEGIN_SAMPLE" : "END_SAMPLE"),
+            sampleValue);
+    if (!beginSample) {
+        fflush(hp_file);
+    }
+}
+
+
+void freeHeapProfiling (void)
+{
+    free_prof_locale();
+}
+
+/* --------------------------------------------------------------------------
+ * Initialize the heap profilier
+ * ----------------------------------------------------------------------- */
+void
+initHeapProfiling(void)
+{
+    if (! RtsFlags.ProfFlags.doHeapProfile) {
+        return;
+    }
+
+    init_prof_locale();
+    set_prof_locale();
+
     char *prog;
 
-    prog = stgMallocBytes(strlen(prog_name) + 1, "initProfiling2");
+    prog = stgMallocBytes(strlen(prog_name) + 1, "initHeapProfiling");
     strcpy(prog, prog_name);
 #if defined(mingw32_HOST_OS)
     // on Windows, drop the .exe suffix if there is one
@@ -340,7 +468,7 @@ void initProfiling (void)
     sprintf(hp_filename, "%s.hp", prog);
 
     /* open the log file */
-    if ((hp_file = __rts_fopen(hp_filename, "w")) == NULL) {
+    if ((hp_file = __rts_fopen(hp_filename, "w+")) == NULL) {
       debugBelch("Can't open profiling report file %s\n",
               hp_filename);
       RtsFlags.ProfFlags.doHeapProfile = 0;
@@ -351,56 +479,13 @@ void initProfiling (void)
 
   stgFree(prog);
 
-  initHeapProfiling();
-}
-
-void endProfiling( void )
-{
-  endHeapProfiling();
-}
-#endif /* !PROFILING */
-
-static void
-printSample(bool beginSample, StgDouble sampleValue)
-{
-    fprintf(hp_file, "%s %f\n",
-            (beginSample ? "BEGIN_SAMPLE" : "END_SAMPLE"),
-            sampleValue);
-    if (!beginSample) {
-        fflush(hp_file);
-    }
-}
-
-static void
-dumpCostCentresToEventLog(void)
-{
-#if defined(PROFILING)
-    CostCentre *cc, *next;
-    for (cc = CC_LIST; cc != NULL; cc = next) {
-        next = cc->link;
-        traceHeapProfCostCentre(cc->ccID, cc->label, cc->module,
-                                cc->srcloc, cc->is_caf);
-    }
-#endif
-}
-
-/* --------------------------------------------------------------------------
- * Initialize the heap profilier
- * ----------------------------------------------------------------------- */
-uint32_t
-initHeapProfiling(void)
-{
-    if (! RtsFlags.ProfFlags.doHeapProfile) {
-        return 0;
-    }
-
 #if defined(PROFILING)
     if (doingLDVProfiling() && doingRetainerProfiling()) {
         errorBelch("cannot mix -hb and -hr");
         stg_exit(EXIT_FAILURE);
     }
 #if defined(THREADED_RTS)
-    // See Trac #12019.
+    // See #12019.
     if (doingLDVProfiling() && RtsFlags.ParFlags.nCapabilities > 1) {
         errorBelch("-hb cannot be used with multiple capabilities");
         stg_exit(EXIT_FAILURE);
@@ -428,16 +513,18 @@ initHeapProfiling(void)
     initEra( &censuses[era] );
 
     /* initProfilingLogFile(); */
-    fprintf(hp_file, "JOB \"%s", prog_name);
+    fprintf(hp_file, "JOB \"");
+    printEscapedString(prog_name);
 
 #if defined(PROFILING)
-    {
-        int count;
-        for(count = 1; count < prog_argc; count++)
-            fprintf(hp_file, " %s", prog_argv[count]);
-        fprintf(hp_file, " +RTS");
-        for(count = 0; count < rts_argc; count++)
-            fprintf(hp_file, " %s", rts_argv[count]);
+    for (int i = 1; i < prog_argc; ++i) {
+        fputc(' ', hp_file);
+        printEscapedString(prog_argv[i]);
+    }
+    fprintf(hp_file, " +RTS");
+    for (int i = 0; i < rts_argc; ++i) {
+        fputc(' ', hp_file);
+        printEscapedString(rts_argv[i]);
     }
 #endif /* PROFILING */
 
@@ -457,20 +544,19 @@ initHeapProfiling(void)
     }
 #endif
 
-    traceHeapProfBegin(0);
-    dumpCostCentresToEventLog();
+    restore_locale();
 
-    return 0;
+    traceHeapProfBegin(0);
 }
 
 void
 endHeapProfiling(void)
 {
-    StgDouble seconds;
-
     if (! RtsFlags.ProfFlags.doHeapProfile) {
         return;
     }
+
+    set_prof_locale();
 
 #if defined(PROFILING)
     if (doingRetainerProfiling()) {
@@ -508,10 +594,15 @@ endHeapProfiling(void)
 
     stgFree(censuses);
 
-    seconds = mut_user_time();
+    RTSStats stats;
+    getRTSStats(&stats);
+    Time mut_time = stats.mutator_cpu_ns;
+    StgDouble seconds = TimeToSecondsDbl(mut_time);
     printSample(true, seconds);
     printSample(false, seconds);
     fclose(hp_file);
+
+    restore_locale();
 }
 
 
@@ -632,7 +723,7 @@ closureSatisfiesConstraints( const StgClosure* p )
        // reason it might not be valid is if this closure is a
        // a newly deceased weak pointer (i.e. a DEAD_WEAK), since
        // these aren't reached by the retainer profiler's traversal.
-       if (isRetainerSetFieldValid((StgClosure *)p)) {
+       if (isTravDataValid((StgClosure *)p)) {
            rs = retainerSetOf((StgClosure *)p);
            if (rs != NULL) {
                for (i = 0; i < rs->num; i++) {
@@ -766,10 +857,21 @@ dumpCensus( Census *census )
     counter *ctr;
     ssize_t count;
 
+    set_prof_locale();
+
     printSample(true, census->time);
-    traceHeapProfSampleBegin(era);
+
+
+    if (RtsFlags.ProfFlags.doHeapProfile == HEAP_BY_LDV) {
+      traceHeapBioProfSampleBegin(era, census->rtime);
+    } else {
+      traceHeapProfSampleBegin(era);
+    }
+
+
 
 #if defined(PROFILING)
+
     /* change typecast to uint64_t to remove
      * print formatting warning. See #12636 */
     if (RtsFlags.ProfFlags.doHeapProfile == HEAP_BY_LDV) {
@@ -786,6 +888,23 @@ dumpCensus( Census *census )
                 (uint64_t)(census->prim * sizeof(W_)));
         fprintf(hp_file, "DRAG\t%" FMT_Word64 "\n",
                 (uint64_t)(census->drag_total * sizeof(W_)));
+
+
+        // Eventlog
+        traceHeapProfSampleString(0, "VOID",
+                (census->void_total * sizeof(W_)));
+        traceHeapProfSampleString(0, "LAG",
+                ((census->not_used - census->void_total) *
+                                     sizeof(W_)));
+        traceHeapProfSampleString(0, "USE",
+                ((census->used - census->drag_total) *
+                                     sizeof(W_)));
+        traceHeapProfSampleString(0, "INHERENT_USE",
+                (census->prim * sizeof(W_)));
+        traceHeapProfSampleString(0, "DRAG",
+                (census->drag_total * sizeof(W_)));
+
+        traceHeapProfSampleEnd(era);
         printSample(false, census->time);
         return;
     }
@@ -820,10 +939,7 @@ dumpCensus( Census *census )
             traceHeapProfSampleString(0, (char *)ctr->identity,
                                       count * sizeof(W_));
             break;
-        }
-
 #if defined(PROFILING)
-        switch (RtsFlags.ProfFlags.doHeapProfile) {
         case HEAP_BY_CCS:
             fprint_ccs(hp_file, (CostCentreStack *)ctr->identity,
                        RtsFlags.ProfFlags.ccsLength);
@@ -857,18 +973,22 @@ dumpCensus( Census *census )
                 rs->id = -(rs->id);
 
             // report in the unit of bytes: * sizeof(StgWord)
-            printRetainerSetShort(hp_file, rs, RtsFlags.ProfFlags.ccsLength);
+            printRetainerSetShort(hp_file, rs, (W_)count * sizeof(W_)
+                                             , RtsFlags.ProfFlags.ccsLength);
             break;
         }
+#endif
         default:
             barf("dumpCensus; doHeapProfile");
         }
-#endif
 
         fprintf(hp_file, "\t%" FMT_Word "\n", (W_)count * sizeof(W_));
     }
 
+    traceHeapProfSampleEnd(era);
     printSample(false, census->time);
+
+    restore_locale();
 }
 
 
@@ -997,6 +1117,8 @@ heapCensusChain( Census *census, bdescr *bd )
         // of the associated block descriptor, thus introducing slop at the end
         // of the object.  This slop remains after GC, violating the assumption
         // of the loop below that all slop has been eliminated (#11627).
+        // The slop isn't always zeroed (e.g. in non-profiling mode, cf
+        // OVERWRITING_CLOSURE_OFS).
         // Consequently, we handle large ARR_WORDS objects as a special case.
         if (bd->flags & BF_LARGE
             && get_itbl((StgClosure *)p)->type == ARR_WORDS) {
@@ -1005,6 +1127,7 @@ heapCensusChain( Census *census, bdescr *bd )
             heapProfObject(census, (StgClosure *)p, size, prim);
             continue;
         }
+
 
         while (p < bd->free) {
             info = get_itbl((const StgClosure *)p);
@@ -1155,10 +1278,28 @@ heapCensusChain( Census *census, bdescr *bd )
             heapProfObject(census,(StgClosure*)p,size,prim);
 
             p += size;
+
+            /* skip over slop, see Note [slop on the heap] */
+            while (p < bd->free && !*p) p++;
+            /* Note [skipping slop in the heap profiler]
+             * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+             *
+             * We make sure to zero slop that can remain after a major GC so
+             * here we can assume any slop words we see until the block's free
+             * pointer are zero. Since info pointers are always nonzero we can
+             * use this to scan for the next valid heap closure.
+             *
+             * Note that not all types of slop are relevant here, only the ones
+             * that can reman after major GC. So essentially just large objects
+             * and pinned objects. All other closures will have been packed nice
+             * and thight into fresh blocks.
+             */
         }
     }
 }
 
+// Time is process CPU time of beginning of current GC and is used as
+// the mutator CPU time reported as the census timestamp.
 void heapCensus (Time t)
 {
   uint32_t g, n;
@@ -1166,7 +1307,9 @@ void heapCensus (Time t)
   gen_workspace *ws;
 
   census = &censuses[era];
-  census->time  = mut_user_time_until(t);
+  census->time  = TimeToSecondsDbl(t);
+  census->rtime = TimeToNS(stat_getElapsedTime());
+
 
   // calculate retainer sets if necessary
 #if defined(PROFILING)
@@ -1210,12 +1353,12 @@ void heapCensus (Time t)
   // future restriction by biography.
 #if defined(PROFILING)
   if (RtsFlags.ProfFlags.bioSelector == NULL)
+#endif
   {
       freeEra(census);
       census->hash = NULL;
       census->arena = NULL;
   }
-#endif
 
   // we're into the next time period now
   nextEra();

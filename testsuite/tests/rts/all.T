@@ -12,7 +12,10 @@ test('testmblockalloc',
 
 # See bug #101, test requires +RTS -c (or equivalently +RTS -M<something>)
 # only GHCi triggers the bug, but we run the test all ways for completeness.
-test('bug1010', normal, compile_and_run, ['+RTS -c -RTS'])
+test('bug1010',
+     # Non-moving GC doesn't support -c
+     omit_ways(['nonmoving', 'nonmoving_thr', 'nonmoving_thr_ghc']),
+     compile_and_run, ['+RTS -c -RTS'])
 
 def normalise_address(str):
     return re.sub('Access violation in generated code when reading [0]+',
@@ -20,10 +23,10 @@ def normalise_address(str):
                   str)
 
 test('derefnull',
-     [# LLVM Optimiser considers dereference of a null pointer
-      # undefined and marks the code as unreachable which means
-      # that later optimisations remove it altogether.
-      omit_ways(['optllvm']),
+     [# The LLVM backend in particular does not guarantee any particular
+      # behavior on null dereference (similar to #10332).
+      omit_ways(llvm_ways),
+      when(not(have_ncg()), skip),
       # SIGSEGV on Linux (which we make the default)
       exit_code(139),
       # Apparently the output can be different on different
@@ -34,7 +37,6 @@ test('derefnull',
       # The output under OS X is too unstable to readily compare
       when(platform('i386-apple-darwin'), [ignore_stderr, exit_code(139)]),
       when(platform('x86_64-apple-darwin'), [ignore_stderr, exit_code(139)]),
-      when(platform('powerpc-apple-darwin'), [ignore_stderr, exit_code(139)]),
       when(opsys('mingw32'), [ignore_stderr, exit_code(11)]),
       # since these test are supposed to crash the
       # profile report will be empty always.
@@ -44,6 +46,10 @@ test('derefnull',
 test('divbyzero',
      [# SIGFPE on Linux
       exit_code(136),
+      # The LLVM backend in particular does not guarantee any particular
+      # behavior on division-by-zero (#10332).
+      omit_ways(llvm_ways),
+      when(not(have_ncg()), skip),
       # Apparently the output can be different on different
       # Linux setups, so just ignore it. As long as we get
       # the right exit code we're OK.
@@ -58,7 +64,6 @@ test('divbyzero',
       # The output under OS X is too unstable to readily compare
       when(platform('i386-apple-darwin'), [ignore_stderr, exit_code(136)]),
       when(platform('x86_64-apple-darwin'), [ignore_stderr, exit_code(136)]),
-      when(platform('powerpc-apple-darwin'), [ignore_stderr, exit_code(136)]),
       # since these test are supposed to crash the
       # profile report will be empty always.
       # so disable the check for profiling
@@ -66,17 +71,21 @@ test('divbyzero',
      compile_and_run, ['-with-rtsopts="--generate-stack-traces=no"'])
 
 test('outofmem', when(opsys('darwin'), skip),
-                 run_command, ['$MAKE -s --no-print-directory outofmem'])
-test('outofmem2', normal, run_command, ['$MAKE -s --no-print-directory outofmem2'])
+                 makefile_test, ['outofmem'])
+test('outofmem2', normal, makefile_test, ['outofmem2'])
 
-test('T2047', [ignore_stdout, extra_run_opts('+RTS -c -RTS')],
-              compile_and_run, ['-package containers'])
+test('T2047',
+     [ignore_stdout,
+      extra_run_opts('+RTS -c -RTS'),
+      # Non-moving collector doesn't support -c
+      omit_ways(['nonmoving', 'nonmoving_thr', 'nonmoving_thr_ghc'])],
+     compile_and_run, ['-package containers'])
 
 # Blackhole-detection test.
 # Skip GHCi due to #2786
 test('T2783', [ omit_ways(['ghci']), exit_code(1)
-              , expect_broken_for(2783, ['threaded1'])
-	      ], compile_and_run, [''])
+              , fragile_for(2783, ['threaded1'])
+              ], compile_and_run, [''])
 
 # Test the work-stealing deque implementation.  We run this test in
 # both threaded1 (-threaded -debug) and threaded2 (-threaded) ways.
@@ -95,43 +104,31 @@ test('stack002', [extra_files(['stack001.hs']),
 
 # run this test with very small stack chunks to exercise the stack
 # overflow/underflow machinery.
-test('stack003', [ omit_ways('ghci'), # uses unboxed tuples
+test('stack003', [ omit_ways(['ghci']), # uses unboxed tuples
                    extra_run_opts('500000 +RTS -kc1k -kb100 -K96m -RTS') ],
                  compile_and_run, [''])
 
 # Test that +RTS -K0 (e.g. no stack limit) parses correctly
 test('stack004', [ extra_run_opts('+RTS -K0 -RTS')
-		 , expect_broken_for(14913, ['ghci'])
-		 ], compile_and_run, [''])
+                 , expect_broken_for(14913, ['ghci'])
+                 ], compile_and_run, [''])
 
 test('atomicinc', [ c_src, only_ways(['normal','threaded1', 'threaded2']) ], compile_and_run, [''])
 test('atomicxchg', [ c_src, only_ways(['threaded1', 'threaded2']) ],
 compile_and_run, [''])
 
-test('T3424', # it's slow:
-              [ when(fast(), skip), only_ways(['normal','threaded1','ghci']) ],
-              compile_and_run, [''])
+test('T3424',
+     [ when(unregisterised(), fragile(16349)),
+       when(fast(), skip),
+       only_ways(['normal','threaded1','ghci'])
+     ],
+     compile_and_run, [''])
 
 # Test for out-of-range heap size
 test('rtsflags001', [ only_ways(['normal']), exit_code(1), extra_run_opts('+RTS -H0m -RTS') ], compile_and_run, [''])
 
 # Crashed with 7.2 and earlier
 test('rtsflags002', [ only_ways(['normal']) ], compile_and_run, ['-with-rtsopts="-B -B -B"'])
-
-# Test to see if linker scripts link properly to real ELF files
-test('T2615',
-     [extra_files(['libfoo_T2615.c', 'libfoo_script_T2615.so']),
-       when(opsys('mingw32'), skip),
-       # OS X doesn't seem to support linker scripts
-       when(opsys('darwin'), skip),
-       # Solaris' linker does not support GNUish linker scripts
-       when(opsys('solaris2'), skip),
-       pre_cmd('$MAKE -s --no-print-directory T2615-prep'),
-       # Add current directory to dlopen search path
-       cmd_prefix('LD_LIBRARY_PATH=$LD_LIBRARY_PATH:. '),
-       extra_clean(['libfoo_T2615.so', 'libfoo_T2615.o'])],
-     compile_and_run,
-     ['-package ghc'])
 
 # omit dyn and profiling ways, because we don't build dyn_l or p_l
 # variants of the RTS by default
@@ -143,7 +140,19 @@ test('traceBinaryEvent', [ omit_ways(['dyn', 'ghci'] + prof_ways),
                            extra_run_opts('+RTS -ls -RTS') ],
                          compile_and_run, ['-eventlog'])
 
-test('T4059', [], run_command, ['$MAKE -s --no-print-directory T4059'])
+# Test that -ol flag works as expected
+test('EventlogOutput1',
+     [ extra_files(["EventlogOutput.hs"]),
+       omit_ways(['dyn', 'ghci'] + prof_ways) ],
+     makefile_test, ['EventlogOutput1'])
+
+# Test that -ol flag defaults to <program>.eventlog
+test('EventlogOutput2',
+     [ extra_files(["EventlogOutput.hs"]),
+       omit_ways(['dyn', 'ghci'] + prof_ways) ],
+     makefile_test, ['EventlogOutput2'])
+
+test('T4059', [], makefile_test, ['T4059'])
 
 # Test for #4274
 test('exec_signals',
@@ -154,7 +163,7 @@ test('exec_signals',
 
 test('return_mem_to_os', normal, compile_and_run, [''])
 
-test('T4850', when(opsys('mingw32'), expect_broken(4850)), run_command, ['$MAKE -s --no-print-directory T4850'])
+test('T4850', when(opsys('mingw32'), expect_broken(4850)), makefile_test, ['T4850'])
 
 def config_T5250(name, opts):
     if not (config.arch in ['i386','x86_64']):
@@ -170,50 +179,7 @@ test('T5250', [extra_files(['spalign.c']),
                 omit_ways(['ghci']) ],
               compile_and_run, ['spalign.c'])
 
-test('T5423', [], run_command, ['$MAKE -s --no-print-directory T5423'])
-
-# Workaround bug #8458: old dlopen opens sections in the wrong order,
-# so we just accept both orders.
-def checkDynAsm(actual_file, normaliser):
-    actual_raw = read_no_crs(actual_file)
-    actual_str = normaliser(actual_raw)
-    actual = actual_str.split()
-    if actual == ['initArray1', 'initArray2', 'success']:
-        return True
-    elif opsys('darwin') and actual == ['modInitFunc1', 'modInitFunc2', 'success']:
-        return True
-    elif opsys('mingw32') and actual == ['ctors1', 'ctors2', 'success']:
-        return True
-    else:
-        if_verbose(1, 'T5435_dyn_asm failed with %s, see all.T for details' % actual)
-        return False
-
-# T5435_v_asm got split into two tests because depending
-# on the linker, .init_array and .ctors sections are loaded
-# in a different order (but all entries within a section
-# do get loaded in a deterministic order). So we test each
-# separately now.
-# These should have extra_clean() arguments, but I need
-# to somehow extract out the name of DLLs to do that
-test('T5435_v_asm_a', [extra_files(['T5435.hs', 'T5435_asm.c']),
-                     when(arch('powerpc64') or arch('powerpc64le'),
-                          expect_broken(11259))],
-     run_command, ['$MAKE -s --no-print-directory T5435_v_asm_a'])
-# this one just needs to run on linux, as darwin/mingw32 are covered
-# by the _a test already.
-test('T5435_v_asm_b', [extra_files(['T5435.hs', 'T5435_asm.c']),
-                      when(arch('powerpc64') or arch('powerpc64le'),
-                          expect_broken(11259)),
-		      when(opsys('darwin') or opsys('mingw32'), skip)],
-     run_command, ['$MAKE -s --no-print-directory T5435_v_asm_b'])
-test('T5435_v_gcc', [extra_files(['T5435.hs', 'T5435_gcc.c']),
-                     when(arch('powerpc64') or arch('powerpc64le'),
-                          expect_broken(11259))],
-     run_command, ['$MAKE -s --no-print-directory T5435_v_gcc'])
-test('T5435_dyn_asm', [extra_files(['T5435.hs', 'T5435_asm.c']),
-                       check_stdout(checkDynAsm)],
-     run_command, ['$MAKE -s --no-print-directory T5435_dyn_asm'])
-test('T5435_dyn_gcc', extra_files(['T5435.hs', 'T5435_gcc.c']) , run_command, ['$MAKE -s --no-print-directory T5435_dyn_gcc'])
+test('T5423', [], makefile_test, ['T5423'])
 
 test('T5993', extra_run_opts('+RTS -k8 -RTS'), compile_and_run, [''])
 
@@ -225,16 +191,18 @@ test('T6006', [ omit_ways(prof_ways + ['ghci']),
                  # needs it.
                compile_and_run, ['T6006_c.c -no-hs-main'])
 
-test('T7037', [], run_command, ['$MAKE -s --no-print-directory T7037'])
+test('T7037', [], makefile_test, ['T7037'])
 
 test('T7087', exit_code(1), compile_and_run, [''])
-test('T7160', normal, compile_and_run, [''])
+test('T7160', omit_ways(['nonmoving_thr', 'nonmoving_thr_ghc']), compile_and_run, [''])
 
 test('T7040', [omit_ways(['ghci'])], compile_and_run, ['T7040_c.c'])
 
 test('T7040_ghci',
      [extra_files(['T7040_c.h']),
       only_ways(['ghci']),
+      # Fragile when unregisterised; see #16085
+      when(unregisterised(), skip),
       pre_cmd('$MAKE -s --no-print-directory T7040_ghci_setup')],
      compile_and_run, ['T7040_ghci_c.o'])
 
@@ -257,15 +225,11 @@ test('T7815', [ multi_cpu_race,
 test('ffishutdown', [ignore_stderr, only_ways(['threaded1','threaded2'])],
      compile_and_run, [''])
 
-test('T7919', [when(fast(), skip), omit_ways(prof_ways)], compile_and_run,
+# Times out in ghci way
+test('T7919', [when(fast(), skip), omit_ways(['ghci'] + prof_ways)], compile_and_run,
      [config.ghc_th_way_flags])
 
 test('T8035', normal, compile_and_run, [''])
-
-test('linker_unload',
-     [extra_files(['LinkerUnload.hs', 'Test.hs']),
-      when(arch('powerpc64') or arch('powerpc64le'), expect_broken(11259))],
-     run_command, ['$MAKE -s --no-print-directory linker_unload'])
 
 test('T8209', [ req_smp, only_ways(threaded_ways), ignore_stdout ],
               compile_and_run, [''])
@@ -291,16 +255,11 @@ test('T9045', [ omit_ways(['ghci']), extra_run_opts('10000 +RTS -A8k -RTS') ], c
 test('T9078', only_ways(['threaded1']), compile_and_run, [''])
 
 test('T10017', [ when(opsys('mingw32'), skip)
+               , when(unregisterised(), skip)
+               , req_smp
                , only_ways(threaded_ways), extra_run_opts('+RTS -N2 -RTS') ], compile_and_run, [''])
 
 test('T11108', normal, compile_and_run, [''])
-
-test('rdynamic', [ unless(opsys('linux') or opsys('mingw32'), skip)
-                 # this needs runtime infrastructure to do in ghci:
-                 #  '-rdynamic' ghc, load modules only via dlopen(RTLD_BLOBAL) and more.
-                 , omit_ways(['ghci'])
-                 ],
-     compile_and_run, ['-rdynamic -package ghc'])
 
 test('GcStaticPointers', [when(doing_ghci(), extra_hc_opts('-fobject-code'))],
      compile_and_run, [''])
@@ -312,18 +271,6 @@ test('overflow1', [ exit_code(251), when(wordsize(32), expect_broken(15255)) ],
      compile_and_run, [''])
 test('overflow2', [ exit_code(251) ], compile_and_run, [''])
 test('overflow3', [ exit_code(251) ], compile_and_run, [''])
-
-test('linker_error1', [extra_files(['linker_error.c']),
-                       ignore_stderr], run_command,
-     ['$MAKE -s --no-print-directory linker_error1'])
-
-test('linker_error2', [extra_files(['linker_error.c']),
-                       ignore_stderr], run_command,
-     ['$MAKE -s --no-print-directory linker_error2'])
-
-test('linker_error3', [extra_files(['linker_error.c']),
-                       ignore_stderr], run_command,
-     ['$MAKE -s --no-print-directory linker_error3'])
 
 def grep_stderr(pattern):
     def wrapper(cmd, pattern=pattern):
@@ -373,51 +320,48 @@ test('T10904', [ omit_ways(['ghci']), extra_run_opts('20000') ],
 test('T10728', [extra_run_opts('+RTS -maxN3 -RTS'), only_ways(['threaded2'])],
                compile_and_run, [''])
 
-test('T9405', [when(msys(), expect_broken(12714))], run_command,
-     ['$MAKE -s --no-print-directory T9405'])
+test('T9405', [when(msys(), expect_broken(12714))], makefile_test, ['T9405'])
 
 test('T11788', when(ghc_dynamic(), skip),
-              run_command, ['$MAKE -s --no-print-directory T11788'])
+              makefile_test, ['T11788'])
 
-test('T10296a', [req_smp], run_command,
-     ['$MAKE -s --no-print-directory T10296a'])
+test('T10296a', [req_smp], makefile_test, ['T10296a'])
 
-test('T10296b', [only_ways('threaded2')], compile_and_run, [''])
+test('T10296b', [only_ways(['threaded2'])], compile_and_run, [''])
 
-test('numa001', [ extra_run_opts('8'), extra_ways(['debug_numa']) ]
+test('numa001', [ extra_run_opts('8'), unless(unregisterised(), extra_ways(['debug_numa'])) ]
                 , compile_and_run, [''])
 
 test('T12497', [ unless(opsys('mingw32'), skip)
                ],
-               run_command, ['$MAKE -s --no-print-directory T12497'])
+               makefile_test, ['T12497'])
 
 test('T13617', [ unless(opsys('mingw32'), skip)],
-               run_command, ['$MAKE -s --no-print-directory T13617'])
+               makefile_test, ['T13617'])
 
 # This test sometimes produces out of sequence samples in the profasm way, but
 # not reliably, so we just skip it. See ticket #15065.
 # Test is being skipped on darwin due to it's flakiness.
 test('T12903', [ when(opsys('mingw32'), skip)
                , when(opsys('darwin'), skip)
-	           , omit_ways(['ghci', 'profasm'])]
-	       , compile_and_run, [''])
+               , omit_ways(['ghci', 'profasm'])]
+               , compile_and_run, [''])
 
 test('T13832', exit_code(1), compile_and_run, ['-threaded'])
 test('T13894', normal, compile_and_run, [''])
 # this test fails with the profasm way on some machines but not others,
 # so we just skip it.
 test('T14497', [omit_ways(['profasm']), multi_cpu_race], compile_and_run, ['-O'])
-test('T14695', [normal, ignore_stderr]
-             , run_command, ['$MAKE -s --no-print-directory T14695'])
+test('T14695', [normal, ignore_stderr], makefile_test, ['T14695'])
 test('T14702', [ ignore_stdout
+               , when(unregisterised(), skip)
                , only_ways(['threaded1', 'threaded2'])
                , extra_run_opts('+RTS -A32m -N8 -T -RTS')
                ]
                , compile_and_run, [''])
 
 test('T14900', normal, compile_and_run, ['-package ghc-compact'])
-test('InternalCounters', normal, run_command,
-  ['$MAKE -s --no-print-directory InternalCounters'])
+test('InternalCounters', normal, makefile_test, ['InternalCounters'])
 test('alloccounter1', normal, compile_and_run,
   [
     # avoid allocating stack chunks, which counts as
@@ -427,6 +371,7 @@ test('alloccounter1', normal, compile_and_run,
 
 test('nursery-chunks1',
   [ extra_run_opts('4 100 +RTS -n32k -A1m -RTS')
+  , req_smp
   , only_ways(['threaded1','threaded2'])
   ],
   compile_and_run,
@@ -439,17 +384,37 @@ test('nursery-chunks1',
 test('keep-cafs-fail',
   [ extra_files(['KeepCafsBase.hs', 'KeepCafs1.hs',
                  'KeepCafs2.hs', 'KeepCafsMain.hs']),
+    when(opsys('mingw32'), expect_broken (5987)),
+    when(opsys('freebsd'), expect_broken(16035)),
     filter_stdout_lines('Evaluated a CAF|exit.*'),
     ignore_stderr, # on OS X the shell emits an "Abort trap" message to stderr
+    req_rts_linker,
   ],
-  run_command,
-  ['$MAKE -s --no-print-directory KeepCafsFail'])
+  makefile_test, ['KeepCafsFail'])
 
 # Test the -fkeep-cafs flag
 test('keep-cafs',
   [ extra_files(['KeepCafsBase.hs', 'KeepCafs1.hs',
-                 'KeepCafs2.hs', 'KeepCafsMain.hs'])
+                 'KeepCafs2.hs', 'KeepCafsMain.hs']),
+    when(opsys('mingw32'), expect_broken (5987)),
+    when(opsys('freebsd'), expect_broken(16035)),
+    req_rts_linker
   ],
-  run_command,
-  ['$MAKE -s --no-print-directory KeepCafs'])
+  makefile_test, ['KeepCafs'])
 
+test('T16514', unless(opsys('mingw32'), skip), compile_and_run, ['T16514_c.cpp -lstdc++'])
+test('test-zeroongc', extra_run_opts('-DZ'), compile_and_run, ['-debug'])
+
+test('T13676',
+     [when(opsys('darwin') or opsys('mingw32'), expect_broken(17447)),
+      extra_files(['T13676.hs'])],
+     ghci_script, ['T13676.script'])
+test('InitEventLogging',
+     [only_ways(['normal']), extra_run_opts('+RTS -RTS')],
+     compile_and_run, ['-eventlog InitEventLogging_c.c'])
+
+test('T17088',
+     [only_ways(['normal']), extra_run_opts('+RTS -c -A256k -RTS')],
+     compile_and_run, ['-rtsopts -O2'])
+
+test('T15427', normal, compile_and_run, [''])

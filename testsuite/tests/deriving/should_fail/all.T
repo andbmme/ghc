@@ -12,8 +12,7 @@ test('drvfail011', normal, compile_fail, [''])
 test('drvfail012', normal, compile_fail, [''])
 test('drvfail013', normal, compile_fail, [''])
 test('drvfail015', normal, compile_fail, [''])
-test('drvfail016', [], run_command,
-     ['$MAKE --no-print-directory -s drvfail016'])
+test('drvfail016', [], makefile_test, [])
 test('T1830_1', normal, compile_fail, [''])
 test('T2394', normal, compile_fail, [''])
 # T2604 was removed as it was out of date re: fixing #9858
@@ -33,7 +32,7 @@ test('T5287', normal, compile_fail, [''])
 test('T5478', normal, compile_fail, [''])
 test('T5686', normal, compile_fail, [''])
 test('T5922', normal, compile_fail, [''])
-test('T1133A', [], run_command, ['$MAKE --no-print-directory -s T1133A'])
+test('T1133A', [], makefile_test, [])
 # 5863a was removed as it was out of date re: fixing #9858
 test('T7959', normal, compile_fail, [''])
 
@@ -67,6 +66,7 @@ test('T11509_1', [when(doing_ghci(), extra_hc_opts('-fobject-code'))],
 test('T12163', normal, compile_fail, [''])
 test('T12512', omit_ways(['ghci']), compile_fail, [''])
 test('T12801', normal, compile_fail, [''])
+test('T13154c', normal, compile_fail, [''])
 test('T14365', [extra_files(['T14365B.hs','T14365B.hs-boot'])],
                multimod_compile_fail, ['T14365A',''])
 test('T14728a', normal, compile_fail, [''])
@@ -74,7 +74,11 @@ test('T14728b', normal, compile_fail, [''])
 test('T14916', normal, compile_fail, [''])
 test('T15073', [extra_files(['T15073a.hs'])], multimod_compile_fail,
                ['T15073', '-v0'])
+test('T16181', normal, compile_fail, [''])
+test('T16923', normal, compile_fail, [''])
+test('T18127b', normal, compile_fail, [''])
 test('deriving-via-fail', normal, compile_fail, [''])
 test('deriving-via-fail2', normal, compile_fail, [''])
 test('deriving-via-fail3', normal, compile_fail, [''])
 test('deriving-via-fail4', normal, compile_fail, [''])
+test('deriving-via-fail5', normal, compile_fail, [''])

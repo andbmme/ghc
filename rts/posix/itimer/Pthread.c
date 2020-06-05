@@ -39,6 +39,7 @@
 #include "Rts.h"
 
 #include "Ticker.h"
+#include "RtsUtils.h"
 #include "Proftimer.h"
 #include "Schedule.h"
 #include "posix/Clock.h"
@@ -109,37 +110,45 @@ static void *itimer_thread_func(void *_handle_tick)
 
     timerfd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC);
     if (timerfd == -1) {
-        barf("timerfd_create");
+        barf("timerfd_create: %s", strerror(errno));
     }
     if (!TFD_CLOEXEC) {
         fcntl(timerfd, F_SETFD, FD_CLOEXEC);
     }
     if (timerfd_settime(timerfd, 0, &it, NULL)) {
-        barf("timerfd_settime");
+        barf("timerfd_settime: %s", strerror(errno));
     }
 #endif
 
     while (!exited) {
         if (USE_TIMERFD_FOR_ITIMER) {
-            if (read(timerfd, &nticks, sizeof(nticks)) != sizeof(nticks)) {
-                if (errno != EINTR) {
-                    barf("Itimer: read(timerfd) failed");
-                }
+            ssize_t r = read(timerfd, &nticks, sizeof(nticks));
+            if ((r == 0) && (errno == 0)) {
+               /* r == 0 is expected only for non-blocking fd (in which case
+                * errno should be EAGAIN) but we use a blocking fd.
+                *
+                * Due to a kernel bug (cf https://lkml.org/lkml/2019/8/16/335)
+                * on some platforms we could see r == 0 and errno == 0.
+                */
+               IF_DEBUG(scheduler, debugBelch("read(timerfd) returned 0 with errno=0. This is a known kernel bug. We just ignore it."));
+            }
+            else if (r != sizeof(nticks) && errno != EINTR) {
+               barf("Itimer: read(timerfd) failed with %s and returned %zd", strerror(errno), r);
             }
         } else {
-            if (usleep(TimeToUS(itimer_interval)) != 0 && errno != EINTR) {
-                sysErrorBelch("usleep(TimeToUS(itimer_interval) failed");
+            if (rtsSleep(itimer_interval) != 0) {
+                sysErrorBelch("ITimer: sleep failed: %s", strerror(errno));
             }
         }
 
         // first try a cheap test
         if (stopped) {
-            ACQUIRE_LOCK(&mutex);
+            OS_ACQUIRE_LOCK(&mutex);
             // should we really stop?
             if (stopped) {
                 waitCondition(&start_cond, &mutex);
             }
-            RELEASE_LOCK(&mutex);
+            OS_RELEASE_LOCK(&mutex);
         } else {
             handle_tick(0);
         }
@@ -147,8 +156,6 @@ static void *itimer_thread_func(void *_handle_tick)
 
     if (USE_TIMERFD_FOR_ITIMER)
         close(timerfd);
-    closeMutex(&mutex);
-    closeCondition(&start_cond);
     return NULL;
 }
 
@@ -171,26 +178,26 @@ initTicker (Time interval, TickProc handle_tick)
         pthread_setname_np(thread, "ghc_ticker");
 #endif
     } else {
-        barf("Itimer: Failed to spawn thread");
+        barf("Itimer: Failed to spawn thread: %s", strerror(errno));
     }
 }
 
 void
 startTicker(void)
 {
-    ACQUIRE_LOCK(&mutex);
+    OS_ACQUIRE_LOCK(&mutex);
     stopped = 0;
     signalCondition(&start_cond);
-    RELEASE_LOCK(&mutex);
+    OS_RELEASE_LOCK(&mutex);
 }
 
 /* There may be at most one additional tick fired after a call to this */
 void
 stopTicker(void)
 {
-    ACQUIRE_LOCK(&mutex);
+    OS_ACQUIRE_LOCK(&mutex);
     stopped = 1;
-    RELEASE_LOCK(&mutex);
+    OS_RELEASE_LOCK(&mutex);
 }
 
 /* There may be at most one additional tick fired after a call to this */
@@ -205,8 +212,10 @@ exitTicker (bool wait)
     // wait for ticker to terminate if necessary
     if (wait) {
         if (pthread_join(thread, NULL)) {
-            sysErrorBelch("Itimer: Failed to join");
+            sysErrorBelch("Itimer: Failed to join: %s", strerror(errno));
         }
+        closeMutex(&mutex);
+        closeCondition(&start_cond);
     } else {
         pthread_detach(thread);
     }

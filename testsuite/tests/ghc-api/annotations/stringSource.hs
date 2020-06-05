@@ -8,17 +8,17 @@ module Main where
 
 -- import Data.Generics
 import Data.Data
-import Data.List
+import Data.List (intercalate)
 import System.IO
 import GHC
-import BasicTypes
-import DynFlags
-import FastString
-import ForeignCall
-import MonadUtils
-import Outputable
-import HsDecls
-import Bag (filterBag,isEmptyBag)
+import GHC.Types.Basic
+import GHC.Driver.Session
+import GHC.Data.FastString
+import GHC.Types.ForeignCall
+import GHC.Utils.Monad
+import GHC.Utils.Outputable
+import GHC.Hs.Decls
+import GHC.Data.Bag (filterBag,isEmptyBag)
 import System.Directory (removeFile)
 import System.Environment( getArgs )
 import qualified Data.Map as Map
@@ -30,7 +30,7 @@ main = do
         testOneFile libdir fileName
 
 testOneFile libdir fileName = do
-       ((anns,cs),p) <- runGhc (Just libdir) $ do
+       p <- runGhc (Just libdir) $ do
                         dflags <- getSessionDynFlags
                         setSessionDynFlags dflags
                         let mn =mkModuleName fileName
@@ -40,7 +40,7 @@ testOneFile libdir fileName = do
                         load LoadAllTargets
                         modSum <- getModSummary mn
                         p <- parseModule modSum
-                        return (pm_annotations p,p)
+                        return p
 
        let tupArgs = gq (pm_parsed_source p)
 
@@ -73,17 +73,20 @@ testOneFile libdir fileName = do
 
      doRuleDecl :: RuleDecl GhcPs
                 -> [(String,[Located (SourceText,FastString)])]
-     doRuleDecl (HsRule _ ss _ _ _ _) = [("r",[ss])]
+     doRuleDecl (HsRule _ ss _ _ _ _ _) = [("r",[ss])]
 
      doCCallTarget :: CCallTarget
                    -> [(String,[Located (SourceText,FastString)])]
      doCCallTarget (StaticTarget s f _ _) = [("st",[(noLoc (s,f))])]
 
      doHsExpr :: HsExpr GhcPs -> [(String,[Located (SourceText,FastString)])]
-     doHsExpr (HsCoreAnn _ src ss _) = [("co",[conv (noLoc ss)])]
-     doHsExpr (HsSCC     _ src ss _) = [("sc",[conv (noLoc ss)])]
-     doHsExpr (HsTickPragma _ src (ss,_,_) _ss2 _) = [("tp",[conv (noLoc ss)])]
+     doHsExpr (HsPragE _ prag _) = doPragE prag
      doHsExpr _ = []
+
+     doPragE :: HsPragE GhcPs -> [(String,[Located (SourceText,FastString)])]
+     doPragE (HsPragCore _ src ss) = [("co",[conv (noLoc ss)])]
+     doPragE (HsPragSCC  _ src ss) = [("sc",[conv (noLoc ss)])]
+     doPragE (HsPragTick _ src (ss,_,_) _ss2) = [("tp",[conv (noLoc ss)])]
 
      conv (GHC.L l (StringLiteral st fs)) = GHC.L l (st,fs)
 

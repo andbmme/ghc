@@ -7,7 +7,7 @@
  * making .cmm code a bit less error-prone to write, and a bit easier
  * on the eye for the reader.
  *
- * For the syntax of .cmm files, see the parser in ghc/compiler/cmm/CmmParse.y.
+ * For the syntax of .cmm files, see the parser in ghc/compiler/GHC/Cmm/Parser.y.
  *
  * Accessing fields of structures defined in the RTS header files is
  * done via automatically-generated macros in DerivedConstants.h.  For
@@ -73,7 +73,7 @@
 
 /*
  * The RTS must sometimes UNTAG a pointer before dereferencing it.
- * See the wiki page Commentary/Rts/HaskellExecution/PointerTagging
+ * See the wiki page commentary/rts/haskell-execution/pointer-tagging
  */
 #define TAG_MASK ((1 << TAG_BITS) - 1)
 #define UNTAG(p) (p & ~TAG_MASK)
@@ -159,14 +159,19 @@
 #define BYTES_TO_WDS(n) ((n) / SIZEOF_W)
 #define ROUNDUP_BYTES_TO_WDS(n) (((n) + SIZEOF_W - 1) / SIZEOF_W)
 
-/* TO_W_(n) converts n to W_ type from a smaller type */
+/*
+ * TO_W_(n) and TO_ZXW_(n) convert n to W_ type from a smaller type,
+ * with and without sign extension respectively
+ */
 #if SIZEOF_W == 4
 #define TO_I64(x) %sx64(x)
 #define TO_W_(x) %sx32(x)
+#define TO_ZXW_(x) %zx32(x)
 #define HALF_W_(x) %lobits16(x)
 #elif SIZEOF_W == 8
 #define TO_I64(x) (x)
 #define TO_W_(x) %sx64(x)
+#define TO_ZXW_(x) %zx64(x)
 #define HALF_W_(x) %lobits32(x)
 #endif
 
@@ -303,7 +308,9 @@
 #define ENTER_(ret,x)                                   \
  again:                                                 \
   W_ info;                                              \
-  LOAD_INFO(ret,x)                                       \
+  LOAD_INFO(ret,x)                                      \
+  /* See Note [Heap memory barriers] in SMP.h */        \
+  prim_read_barrier;                                    \
   switch [INVALID_OBJECT .. N_CLOSURE_TYPES]            \
          (TO_W_( %INFO_TYPE(%STD_INFO(info)) )) {       \
   case                                                  \
@@ -351,7 +358,7 @@
  * Need MachRegs, because some of the RTS code is conditionally
  * compiled based on REG_R1, REG_R2, etc.
  */
-#include "stg/RtsMachRegs.h"
+#include "stg/MachRegsForHost.h"
 
 #include "rts/prof/LDV.h"
 
@@ -462,7 +469,7 @@
 // Version of GC_PRIM for use in low-level Cmm.  We can call
 // stg_gc_prim, because it takes one argument and therefore has a
 // platform-independent calling convention (Note [Syntax of .cmm
-// files] in CmmParse.y).
+// files] in GHC.Cmm.Parser).
 #define GC_PRIM_LL(fun)                         \
         R1 = fun;                               \
         jump stg_gc_prim [R1];
@@ -616,16 +623,24 @@
 #define mutArrPtrCardUp(i)   (((i) + mutArrCardMask) >> MUT_ARR_PTRS_CARD_BITS)
 #define mutArrPtrsCardWords(n) ROUNDUP_BYTES_TO_WDS(mutArrPtrCardUp(n))
 
-#if defined(PROFILING) || (!defined(THREADED_RTS) && defined(DEBUG))
+#if defined(PROFILING) || defined(DEBUG)
 #define OVERWRITING_CLOSURE_SIZE(c, size) foreign "C" overwritingClosureSize(c "ptr", size)
 #define OVERWRITING_CLOSURE(c) foreign "C" overwritingClosure(c "ptr")
-#define OVERWRITING_CLOSURE_OFS(c,n) foreign "C" overwritingClosureOfs(c "ptr", n)
+#define OVERWRITING_CLOSURE_MUTABLE(c, off) foreign "C" overwritingMutableClosureOfs(c "ptr", off)
 #else
 #define OVERWRITING_CLOSURE_SIZE(c, size) /* nothing */
 #define OVERWRITING_CLOSURE(c) /* nothing */
-#define OVERWRITING_CLOSURE_OFS(c,n) /* nothing */
+#define OVERWRITING_CLOSURE_MUTABLE(c, off) /* nothing */
 #endif
 
+// Memory barriers.
+// For discussion of how these are used to fence heap object
+// accesses see Note [Heap memory barriers] in SMP.h.
+#if defined(THREADED_RTS)
+#define prim_read_barrier prim %read_barrier()
+#else
+#define prim_read_barrier /* nothing */
+#endif
 #if defined(THREADED_RTS)
 #define prim_write_barrier prim %write_barrier()
 #else
@@ -828,6 +843,10 @@
       if (__gen > 0) { recordMutableCap(__p, __gen); }
 
 /* -----------------------------------------------------------------------------
+   Update remembered set write barrier
+   -------------------------------------------------------------------------- */
+
+/* -----------------------------------------------------------------------------
    Arrays
    -------------------------------------------------------------------------- */
 
@@ -929,3 +948,25 @@
     prim %memcpy(dst_p, src_p, n * SIZEOF_W, SIZEOF_W);        \
                                                                \
     return (dst);
+
+
+//
+// Nonmoving write barrier helpers
+//
+// See Note [Update remembered set] in NonMovingMark.c.
+
+#if defined(THREADED_RTS)
+#define IF_NONMOVING_WRITE_BARRIER_ENABLED                     \
+    if (W_[nonmoving_write_barrier_enabled] != 0) (likely: False)
+#else
+// A similar measure is also taken in rts/NonMoving.h, but that isn't visible from C--
+#define IF_NONMOVING_WRITE_BARRIER_ENABLED                     \
+    if (0)
+#define nonmoving_write_barrier_enabled 0
+#endif
+
+// A useful helper for pushing a pointer to the update remembered set.
+#define updateRemembSetPushPtr(p)                                    \
+    IF_NONMOVING_WRITE_BARRIER_ENABLED {                             \
+      ccall updateRemembSetPushClosure_(BaseReg "ptr", p "ptr");     \
+    }

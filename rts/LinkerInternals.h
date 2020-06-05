@@ -10,6 +10,7 @@
 
 #include "Rts.h"
 #include "Hash.h"
+#include "linker/M32Alloc.h"
 
 #if RTS_LINKER_USE_MMAP
 #include <sys/mman.h>
@@ -19,6 +20,14 @@
 
 typedef void SymbolAddr;
 typedef char SymbolName;
+
+/* Hold extended information about a symbol in case we need to resolve it at a
+   late stage.  */
+typedef struct _Symbol
+{
+    SymbolName *name;
+    SymbolAddr *addr;
+} Symbol_t;
 
 /* Indication of section kinds for loaded objects.  Needed by
    the GC for deciding whether or not a pointer on the stack
@@ -53,6 +62,24 @@ typedef
           SECTION_MALLOC
         }
    SectionAlloc;
+
+/* Indicates a desired memory protection for pages within a segment. Defined as
+ * enum since it's more explicit and look nicer in a debugger.
+ *
+ * Can be used directly as a substitution for a combination of PROT_X flags on
+ * POSIX systems.
+ */
+typedef enum {
+#if RTS_LINKER_USE_MMAP
+    SEGMENT_PROT_RO  = PROT_READ,
+    SEGMENT_PROT_RX  = PROT_READ | PROT_EXEC,
+    SEGMENT_PROT_RWO = PROT_READ | PROT_WRITE,
+#else
+    SEGMENT_PROT_RO,
+    SEGMENT_PROT_RX,
+    SEGMENT_PROT_RWO,
+#endif
+} SegmentProt;
 
 /*
  * Note [No typedefs for customizable types]
@@ -94,6 +121,16 @@ typedef
       struct _ProddableBlock* next;
    }
    ProddableBlock;
+
+typedef struct _Segment {
+    void *start;                /* page aligned start address of a segment */
+    size_t size;                /* page rounded size of a segment */
+    SegmentProt prot;           /* mem protection to set after all symbols were
+                                 * resolved */
+
+    int *sections_idx;          /* an array of section indexes assigned to this segment */
+    int n_sections;
+} Segment;
 
 /*
  * We must keep track of the StablePtrs that are created for foreign
@@ -148,7 +185,7 @@ typedef struct _ObjectCode {
        this object into the global symbol hash table.  This is so that
        we know which parts of the latter mapping to nuke when this
        object is removed from the system. */
-    char** symbols;
+    Symbol_t *symbols;
     int    n_symbols;
 
     /* ptr to mem containing the object file image */
@@ -169,10 +206,12 @@ typedef struct _ObjectCode {
        after allocation, so that we can use realloc */
     int        misalignment;
 
-    /* The section-kind entries for this object module.  Linked
-       list. */
+    /* The section-kind entries for this object module. An array. */
     int n_sections;
     Section* sections;
+
+    int n_segments;
+    Segment *segments;
 
     /* Allow a chain of these things */
     struct _ObjectCode * next;
@@ -193,13 +232,23 @@ typedef struct _ObjectCode {
     unsigned long   first_symbol_extra;
     unsigned long   n_symbol_extras;
 #endif
+    /* Additional memory that is preallocated and contiguous with image
+       which can be used used to relocate bss sections. */
+    char* bssBegin;
+    char* bssEnd;
 
     ForeignExportStablePtr *stable_ptrs;
 
     /* Holds the list of symbols in the .o file which
        require extra information.*/
-    HashTable *extraInfos;
+    StrHashTable *extraInfos;
 
+#if RTS_LINKER_USE_MMAP == 1
+    /* The m32 allocators used for allocating small sections and symbol extras
+     * during loading. We have two: one for (writeable) data and one for
+     * (read-only/executable) code. */
+    m32_allocator *rw_m32, *rx_m32;
+#endif
 } ObjectCode;
 
 #define OC_INFORMATIVE_FILENAME(OC)             \
@@ -243,6 +292,7 @@ void freeObjectCode (ObjectCode *oc);
 SymbolAddr* loadSymbol(SymbolName *lbl, RtsSymbolInfo *pinfo);
 
 void *mmapForLinker (size_t bytes, uint32_t flags, int fd, int offset);
+void mmapForLinkerMarkExecutable (void *start, size_t len);
 
 void addProddableBlock ( ObjectCode* oc, void* start, int size );
 void checkProddableBlock (ObjectCode *oc, void *addr, size_t size );
@@ -252,12 +302,12 @@ void addSection (Section *s, SectionKind kind, SectionAlloc alloc,
                  void* start, StgWord size, StgWord mapped_offset,
                  void* mapped_start, StgWord mapped_size);
 
-HsBool ghciLookupSymbolInfo(HashTable *table,
+HsBool ghciLookupSymbolInfo(StrHashTable *table,
                             const SymbolName* key, RtsSymbolInfo **result);
 
 int ghciInsertSymbolTable(
     pathchar* obj_name,
-    HashTable *table,
+    StrHashTable *table,
     const SymbolName* key,
     SymbolAddr* data,
     HsBool weak,
@@ -266,7 +316,7 @@ int ghciInsertSymbolTable(
 /* lock-free version of lookupSymbol */
 SymbolAddr* lookupSymbol_ (SymbolName* lbl);
 
-extern /*Str*/HashTable *symhash;
+extern StrHashTable *symhash;
 
 pathchar*
 resolveSymbolAddr (pathchar* buffer, int size,
@@ -300,13 +350,16 @@ ObjectCode* mkOc( pathchar *path, char *image, int imageSize,
                   int misalignment
                   );
 
+void initSegment(Segment *s, void *start, size_t size, SegmentProt prot, int n_sections);
+void freeSegments(ObjectCode *oc);
+
 /* MAP_ANONYMOUS is MAP_ANON on some systems,
    e.g. OS X (before Sierra), OpenBSD etc */
 #if !defined(MAP_ANONYMOUS) && defined(MAP_ANON)
 #define MAP_ANONYMOUS MAP_ANON
 #endif
 
-/* Which object file format are we targetting? */
+/* Which object file format are we targeting? */
 #if defined(linux_HOST_OS) || defined(solaris2_HOST_OS) \
 || defined(linux_android_HOST_OS) \
 || defined(freebsd_HOST_OS) || defined(kfreebsdgnu_HOST_OS) \
@@ -314,7 +367,7 @@ ObjectCode* mkOc( pathchar *path, char *image, int imageSize,
 || defined(openbsd_HOST_OS) || defined(gnu_HOST_OS)
 #  define OBJFORMAT_ELF
 #  include "linker/ElfTypes.h"
-#elif defined (mingw32_HOST_OS)
+#elif defined(mingw32_HOST_OS)
 #  define OBJFORMAT_PEi386
 #  include "linker/PEi386Types.h"
 #elif defined(darwin_HOST_OS) || defined(ios_HOST_OS)

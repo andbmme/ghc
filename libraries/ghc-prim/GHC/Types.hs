@@ -56,7 +56,7 @@ infixr 5 :
 -- | The kind of constraints, like @Show a@
 data Constraint
 
--- | The kind of types with values. For example @Int :: Type@.
+-- | The kind of types with lifted values. For example @Int :: Type@.
 type Type = TYPE 'LiftedRep
 
 {- *********************************************************************
@@ -84,7 +84,7 @@ data Symbol
 -- to @x@.
 --
 type family Any :: k where { }
--- See Note [Any types] in TysWiredIn. Also, for a bit of history on Any see
+-- See Note [Any types] in GHC.Builtin.Types. Also, for a bit of history on Any see
 -- #10886. Note that this must be a *closed* type family: we need to ensure
 -- that this can't reduce to a `data` type for the results discussed in
 -- Note [Any types].
@@ -191,7 +191,7 @@ type role IO representational
 because this role is significant in the normalisation of FFI
 types. Specifically, if this role were to become nominal (which would
 be very strange, indeed!), changes elsewhere in GHC would be
-necessary. See [FFI type roles] in TcForeign.  -}
+necessary. See [FFI type roles] in GHC.Tc.Gen.Foreign.  -}
 
 
 {- *********************************************************************
@@ -214,7 +214,7 @@ for them, e.g. to compile the constructor's info table.
 Furthermore the type of MkCoercible cannot be written in Haskell
 (no syntax for ~#R).
 
-So we define them as regular data types in GHC.Types, and do magic in TysWiredIn,
+So we define them as regular data types in GHC.Types, and do magic in GHC.Builtin.Types,
 inside GHC, to change the kind and type.
 -}
 
@@ -227,13 +227,13 @@ inside GHC, to change the kind and type.
 -- homogeneous equality @~@, this is printed as @~@ unless
 -- @-fprint-equality-relations@ is set.
 class a ~~ b
-  -- See also Note [The equality types story] in TysPrim
+  -- See also Note [The equality types story] in GHC.Builtin.Types.Prim
 
 -- | Lifted, homogeneous equality. By lifted, we mean that it
 -- can be bogus (deferred type error). By homogeneous, the two
 -- types @a@ and @b@ must have the same kinds.
 class a ~ b
-  -- See also Note [The equality types story] in TysPrim
+  -- See also Note [The equality types story] in GHC.Builtin.Types.Prim
 
 -- | @Coercible@ is a two-parameter class that has instances for types @a@ and @b@ if
 --      the compiler can infer that they have the same representation. This class
@@ -282,8 +282,8 @@ class a ~ b
 --      by Joachim Breitner, Richard A. Eisenberg, Simon Peyton Jones and Stephanie Weirich.
 --
 --      @since 4.7.0.0
-class Coercible a b
-  -- See also Note [The equality types story] in TysPrim
+class Coercible (a :: k) (b :: k)
+  -- See also Note [The equality types story] in GHC.Builtin.Types.Prim
 
 {- *********************************************************************
 *                                                                      *
@@ -394,14 +394,22 @@ data RuntimeRep = VecRep VecCount VecElem   -- ^ a SIMD vector type
                 | LiftedRep       -- ^ lifted; represented by a pointer
                 | UnliftedRep     -- ^ unlifted; represented by a pointer
                 | IntRep          -- ^ signed, word-sized value
-                | WordRep         -- ^ unsigned, word-sized value
+                | Int8Rep         -- ^ signed,  8-bit value
+                | Int16Rep        -- ^ signed, 16-bit value
+                | Int32Rep        -- ^ signed, 32-bit value
                 | Int64Rep        -- ^ signed, 64-bit value (on 32-bit only)
+                | WordRep         -- ^ unsigned, word-sized value
+                | Word8Rep        -- ^ unsigned,  8-bit value
+                | Word16Rep       -- ^ unsigned, 16-bit value
+                | Word32Rep       -- ^ unsigned, 32-bit value
                 | Word64Rep       -- ^ unsigned, 64-bit value (on 32-bit only)
                 | AddrRep         -- ^ A pointer, but /not/ to a Haskell value
                 | FloatRep        -- ^ a 32-bit floating point number
                 | DoubleRep       -- ^ a 64-bit floating point number
 
--- See also Note [Wiring in RuntimeRep] in TysWiredIn
+-- RuntimeRep is intimately tied to TyCon.RuntimeRep (in GHC proper). See
+-- Note [RuntimeRep and PrimRep] in RepType.
+-- See also Note [Wiring in RuntimeRep] in GHC.Builtin.Types
 
 -- | Length of a SIMD vector type
 data VecCount = Vec2
@@ -470,7 +478,7 @@ type KindBndr = Int
 -- | The representation produced by GHC for conjuring up the kind of a
 -- 'Data.Typeable.TypeRep'.
 
--- See Note [Representing TyCon kinds: KindRep] in TcTypeable.
+-- See Note [Representing TyCon kinds: KindRep] in GHC.Tc.Instance.Typeable.
 data KindRep = KindRepTyConApp TyCon [KindRep]
              | KindRepVar !KindBndr
              | KindRepApp KindRep KindRep

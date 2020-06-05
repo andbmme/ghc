@@ -28,11 +28,11 @@ test('ffi004', skip, compile_and_run, [''])
 # On x86, the test suffers from floating-point differences due to the
 # use of 80-bit internal precision when using the native code generator.
 #
-test('ffi005', [ omit_ways(prof_ways), 
+test('ffi005', [ omit_ways(prof_ways + ['ghci']),
                  when(arch('i386'), skip),
                  when(platform('i386-apple-darwin'), expect_broken(4105)),
                  exit_code(3) ],
-               compile_and_run, [''])
+               compile_and_run, ['ffi005_c.c'])
 
 test('ffi006', normal, compile_and_run, [''])
 
@@ -87,6 +87,7 @@ test('ffi018', [omit_ways(['ghci'])], compile_and_run, ['ffi018_c.c'])
 test('ffi018_ghci',
      [extra_files(['ffi018.h']),
       only_ways(['ghci']),
+      when(unregisterised(), fragile(16085)),
       pre_cmd('$MAKE -s --no-print-directory ffi018_ghci_setup')],
      compile_and_run, ['ffi018_ghci_c.o'])
 
@@ -98,6 +99,7 @@ test('T1679', normal, compile_and_run, [''])
 test('T1288', [omit_ways(['ghci'])], compile_and_run, ['T1288_c.c'])
 test('T1288_ghci',
      [only_ways(['ghci']),
+      when(unregisterised(), fragile(16085)),
       pre_cmd('$MAKE -s --no-print-directory T1288_ghci_setup')],
      compile_and_run, ['T1288_ghci_c.o'])
 
@@ -156,18 +158,21 @@ test('T5594', [ omit_ways(['ghci']),
                 # needs it.
                 compile_and_run, ['T5594_c.c -no-hs-main'])
 
-test('Capi_Ctype_001', [extra_files(['Capi_Ctype_A_001.hsc', 'capi_ctype_001.h', 'capi_ctype_001_c.c'])], run_command,
-     ['$MAKE -s --no-print-directory Capi_Ctype_001'])
+test('Capi_Ctype_001', [extra_files(['Capi_Ctype_A_001.hsc', 'capi_ctype_001.h', 'capi_ctype_001_c.c'])],
+     makefile_test, ['Capi_Ctype_001'])
 
-test('Capi_Ctype_002', [extra_files(['Capi_Ctype_A_002.hsc', 'capi_ctype_002_A.h', 'capi_ctype_002_B.h'])], run_command,
-     ['$MAKE -s --no-print-directory Capi_Ctype_002'])
+test('Capi_Ctype_002', [extra_files(['Capi_Ctype_A_002.hsc', 'capi_ctype_002_A.h', 'capi_ctype_002_B.h'])],
+     makefile_test, ['Capi_Ctype_002'])
 
 test('ffi_parsing_001', [omit_ways(['ghci'])], compile_and_run,
      ['ffi_parsing_001_c.c'])
 
 test('capi_value', [omit_ways(['ghci'])], compile_and_run, ['capi_value_c.c'])
 
-test('T7170', exit_code(1), compile_and_run, [''])
+test('T7170',
+     [when(opsys('mingw32'), fragile(16801)),
+      exit_code(1)],
+     compile_and_run, [''])
 
 test('T4012', [expect_broken_for(7388, ['ghci'])], multimod_compile_and_run,
      ['T4012', ''])
@@ -188,3 +193,26 @@ test('ffi023', [ omit_ways(['ghci']),
 test('T12134', [omit_ways(['ghci'])], compile_and_run, ['T12134_c.c'])
 
 test('T12614', [omit_ways(['ghci'])], compile_and_run, ['T12614_c.c'])
+
+test('T16650a', [omit_ways(['ghci'])], compile_and_run, ['T16650a_c.c'])
+
+test('T16650b', [omit_ways(['ghci'])], compile_and_run, ['T16650b_c.c'])
+
+test('T16650c', [omit_ways(['ghci'])], compile_and_run, ['T16650c_c.c'])
+
+test('T16650d', [omit_ways(['ghci'])], compile_and_run, ['T16650d_c.c'])
+
+test('PrimFFIInt8', [omit_ways(['ghci'])], compile_and_run, ['PrimFFIInt8_c.c'])
+
+test('PrimFFIWord8', [omit_ways(['ghci'])], compile_and_run, ['PrimFFIWord8_c.c'])
+
+test('PrimFFIInt16', [omit_ways(['ghci'])], compile_and_run, ['PrimFFIInt16_c.c'])
+
+test('PrimFFIWord16', [omit_ways(['ghci'])], compile_and_run, ['PrimFFIWord16_c.c'])
+
+test('T493', [omit_ways(['ghci'])], compile_and_run, ['T493_c.c'])
+
+test('UnliftedNewtypesByteArrayOffset', [omit_ways(['ghci'])], compile_and_run, ['UnliftedNewtypesByteArrayOffset_c.c'])
+
+test('T17471', [omit_ways(['ghci'])], compile_and_run,
+     ['T17471_c.c -optc-D -optcFOO'])

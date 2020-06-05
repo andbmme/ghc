@@ -164,7 +164,7 @@ ioManagerWakeup (void)
         r = write(io_manager_wakeup_fd, &byte, 1);
 #endif
         /* N.B. If the TimerManager is shutting down as we run this
-         * then there is a possiblity that our first read of
+         * then there is a possibility that our first read of
          * io_manager_wakeup_fd is non-negative, but before we get to the
          * write the file is closed. If this occurs, io_manager_wakeup_fd
          * will be written into with -1 (GHC.Event.Control does this prior
@@ -624,7 +624,7 @@ set_sigtstp_action (bool handle)
 void
 install_vtalrm_handler(int sig, TickProc handle_tick)
 {
-    struct sigaction action;
+    struct sigaction action = {};
 
     action.sa_handler = handle_tick;
 
@@ -666,7 +666,8 @@ install_vtalrm_handler(int sig, TickProc handle_tick)
 void
 initDefaultHandlers(void)
 {
-    struct sigaction action,oact;
+    struct sigaction action = {};
+    struct sigaction oact = {};
 
     // install the SIGINT handler
     action.sa_handler = shutdown_handler;

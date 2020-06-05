@@ -3,7 +3,7 @@
            , MagicHash
            , UnboxedTuples
   #-}
-{-# OPTIONS_HADDOCK hide #-}
+{-# OPTIONS_HADDOCK not-home #-}
 
 -----------------------------------------------------------------------------
 -- |
@@ -30,6 +30,8 @@ module GHC.Stable (
 
 import GHC.Ptr
 import GHC.Base
+
+import Unsafe.Coerce ( unsafeCoerceAddr )
 
 -----------------------------------------------------------------------------
 -- Stable Pointers
@@ -85,7 +87,7 @@ foreign import ccall unsafe "hs_free_stable_ptr" freeStablePtr :: StablePtr a ->
 -- undefined behaviour.
 --
 castStablePtrToPtr :: StablePtr a -> Ptr ()
-castStablePtrToPtr (StablePtr s) = Ptr (unsafeCoerce# s)
+castStablePtrToPtr (StablePtr s) = Ptr (unsafeCoerceAddr s)
 
 
 -- |
@@ -99,7 +101,7 @@ castStablePtrToPtr (StablePtr s) = Ptr (unsafeCoerce# s)
 -- 'castStablePtrToPtr'.
 --
 castPtrToStablePtr :: Ptr () -> StablePtr a
-castPtrToStablePtr (Ptr a) = StablePtr (unsafeCoerce# a)
+castPtrToStablePtr (Ptr a) = StablePtr (unsafeCoerceAddr a)
 
 -- | @since 2.01
 instance Eq (StablePtr a) where

@@ -21,7 +21,7 @@ test('simplrun009', normal, compile_and_run, [''])
 test('simplrun010', [extra_run_opts('24 16 8 +RTS -M10m -RTS'),
                      exit_code(251)]
                   , compile_and_run, [''])
-test('simplrun011', normal, compile_and_run, [''])
+test('simplrun011', normal, compile_and_run, ['-fno-worker-wrapper'])
 
 # Really we'd like to run T2486 too, to check that its
 # runtime has not gone up, but here I just compile it so that
@@ -46,9 +46,11 @@ test('T3972', [], compile_and_run, [''])
 test('T5315', normal, compile_and_run, [''])
 test('T5453', normal, compile_and_run, [''])
 test('T5441', [], multimod_compile_and_run, ['T5441', ''])
-test('T5603', normal, compile_and_run, [''])
+# This compares Core from integer-gmp
+test('T5603', reqlib('integer-gmp'), compile_and_run, [''])
 test('T2110', normal, compile_and_run, [''])
 test('AmapCoerce', normal, compile_and_run, [''])
+test('T16208', normal, compile_and_run, [''])
 
 # Run these tests *without* optimisation too
 test('T5625', [ only_ways(['normal','optasm']), exit_code(1) ], compile_and_run, [''])
@@ -79,10 +81,14 @@ test('T13429_2', normal, compile_and_run, [''])
 test('T13750', normal, compile_and_run, [''])
 test('T14178', normal, compile_and_run, [''])
 test('T14768', reqlib('vector'), compile_and_run, [''])
-test('T14868',
-     [when((arch('powerpc64') or arch('powerpc64le')), expect_broken(11261))],
-     compile_and_run, [''])
-test('T14894', [when((arch('powerpc64') or arch('powerpc64le')), expect_broken(11261))], compile_and_run, [''])
+test('T14868', normal, compile_and_run, [''])
+test('T14894', normal, compile_and_run, [''])
 test('T14965', normal, compile_and_run, [''])
-test('T15114', only_ways('optasm'), compile_and_run, [''])
+test('T15114', only_ways(['optasm']), compile_and_run, [''])
 test('T15436', normal, compile_and_run, [''])
+test('T15840', normal, compile_and_run, [''])
+test('T15840a', normal, compile_and_run, [''])
+test('T16066', exit_code(1), compile_and_run, ['-O1'])
+test('T17206', exit_code(1), compile_and_run, [''])
+test('T17151', [], multimod_compile_and_run, ['T17151', ''])
+test('T18012', normal, compile_and_run, [''])

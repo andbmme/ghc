@@ -25,8 +25,7 @@ export MAKE
 
 RUNTESTS     = $(TOP)/driver/runtests.py
 COMPILER     = ghc
-CONFIGDIR    = $(TOP)/config
-CONFIG       = $(CONFIGDIR)/$(COMPILER)
+CONFIG       = $(TOP)/config/$(COMPILER)
 
 ifeq "$(GhcUnregisterised)" "YES"
     # Otherwise C backend generates many warnings about
@@ -37,7 +36,8 @@ endif
 
 # TEST_HC_OPTS is passed to every invocation of TEST_HC
 # in nested Makefiles
-TEST_HC_OPTS = -dcore-lint -dcmm-lint -no-user-$(GhcPackageDbFlag) -rtsopts $(EXTRA_HC_OPTS)
+TEST_HC_OPTS = -dcore-lint -dstg-lint -dcmm-lint \
+			   -no-user-$(GhcPackageDbFlag) -rtsopts $(EXTRA_HC_OPTS)
 
 ifeq "$(MinGhcVersion711)" "YES"
 # Don't warn about missing specialisations. They can only occur with `-O`, but
@@ -52,6 +52,9 @@ ifeq "$(MinGhcVersion801)" "YES"
 TEST_HC_OPTS += -fdiagnostics-color=never
 TEST_HC_OPTS += -fno-diagnostics-show-caret
 endif
+
+# See #15278.
+TEST_HC_OPTS += -Werror=compat
 
 # Add the no-debug-output last as it is often convenient to copy the test invocation
 # removing this line.
@@ -78,7 +81,11 @@ endif
 
 RUNTEST_OPTS += -e "ghc_compiler_always_flags='$(TEST_HC_OPTS)'"
 
-RUNTEST_OPTS += -e config.compiler_debugged=$(GhcDebugged)
+ifeq "$(GhcDebugged)" "YES"
+RUNTEST_OPTS += -e "config.compiler_debugged=True"
+else
+RUNTEST_OPTS += -e "config.compiler_debugged=False"
+endif
 
 ifeq "$(GhcWithNativeCodeGen)" "YES"
 RUNTEST_OPTS += -e ghc_with_native_codegen=True
@@ -171,6 +178,7 @@ else
 RUNTEST_OPTS += -e ghc_with_smp=False
 endif
 
+# Does the LLVM backend work?
 ifeq "$(LLC)" ""
 RUNTEST_OPTS += -e ghc_with_llvm=False
 else ifeq "$(TargetARCH_CPP)" "powerpc"
@@ -212,6 +220,14 @@ ifeq "$(SKIP_PERF_TESTS)" "YES"
 RUNTEST_OPTS += --skip-perf-tests
 endif
 
+ifeq "$(ONLY_PERF_TESTS)" "YES"
+RUNTEST_OPTS += --only-perf-tests
+endif
+
+ifneq "$(TEST_ENV)" ""
+RUNTEST_OPTS += --test-env="$(TEST_ENV)"
+endif
+
 ifeq "$(CLEANUP)" "0"
 RUNTEST_OPTS += -e config.cleanup=False
 else ifeq "$(CLEANUP)" "NO"
@@ -232,7 +248,6 @@ endif
 RUNTEST_OPTS +=  \
 	--rootdir=. \
 	--config-file=$(CONFIG) \
-	-e 'config.confdir="$(CONFIGDIR)"' \
 	-e 'config.platform="$(TARGETPLATFORM)"' \
 	-e 'config.os="$(TargetOS_CPP)"' \
 	-e 'config.arch="$(TargetARCH_CPP)"' \
@@ -261,8 +276,14 @@ RUNTEST_OPTS +=  \
 	--config 'gs=$(call quote_path,$(GS))' \
 	--config 'timeout_prog=$(call quote_path,$(TIMEOUT_PROGRAM))'
 
+RUNTEST_OPTS += --config 'stats_files_dir=$(TOP)/tests/perf/haddock'
+
 RUNTEST_OPTS += -e "config.stage=$(GhcStage)"
 
+ifneq "$(METRICS_FILE)" ""
+RUNTEST_OPTS +=  \
+	--metrics-file "$(METRICS_FILE)"
+endif
 ifneq "$(JUNIT_FILE)" ""
 RUNTEST_OPTS +=  \
   --junit "$(JUNIT_FILE)"

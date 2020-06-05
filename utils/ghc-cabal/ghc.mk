@@ -5,8 +5,8 @@
 # This file is part of the GHC build system.
 #
 # To understand how the build system works and how to modify it, see
-#      http://ghc.haskell.org/trac/ghc/wiki/Building/Architecture
-#      http://ghc.haskell.org/trac/ghc/wiki/Building/Modifying
+#      https://gitlab.haskell.org/ghc/ghc/wikis/building/architecture
+#      https://gitlab.haskell.org/ghc/ghc/wikis/building/modifying
 #
 # -----------------------------------------------------------------------------
 
@@ -23,9 +23,9 @@ CABAL_CONSTRAINT := --constraint="Cabal == $(CABAL_DOTTED_VERSION)"
 # macros is triggered by `-hide-all-packages`, so we have to explicitly
 # enumerate all packages we need in scope.
 ifeq "$(Windows_Host)" "YES"
-CABAL_BUILD_DEPS := ghc-prim base array transformers time containers bytestring deepseq process pretty directory Win32
+CABAL_BUILD_DEPS := ghc-prim base array transformers time containers bytestring deepseq process pretty directory filepath Win32 template-haskell
 else
-CABAL_BUILD_DEPS := ghc-prim base array transformers time containers bytestring deepseq process pretty directory unix
+CABAL_BUILD_DEPS := ghc-prim base array transformers time containers bytestring deepseq process pretty directory filepath unix template-haskell
 endif
 
 ghc-cabal_DIST_BINARY_NAME = ghc-cabal$(exeext0)
@@ -37,29 +37,32 @@ $(ghc-cabal_INPLACE) : $(ghc-cabal_DIST_BINARY) | $$(dir $$@)/.
 	"$(CP)" $< $@
 
 # Minor hack, since we can't reuse the `hs-suffix-rules-srcdir` macro
-ifneq ($(wildcard libraries/Cabal/Cabal/Distribution/Parsec/Lexer.x),)
+ifneq ($(wildcard libraries/Cabal/Cabal/Distribution/Fields/Lexer.x),)
 # Lexer.x exists so we have to call Alex ourselves
-CABAL_LEXER_DEP := bootstrapping/Cabal/Distribution/Parsec/Lexer.hs
+CABAL_LEXER_DEP := bootstrapping/Cabal/Distribution/Fields/Lexer.hs
 
-bootstrapping/Cabal/Distribution/Parsec/Lexer.hs: libraries/Cabal/Cabal/Distribution/Parsec/Lexer.x
-	mkdir -p bootstrapping/Cabal/Distribution/Parsec
+bootstrapping/Cabal/Distribution/Fields/Lexer.hs: libraries/Cabal/Cabal/Distribution/Fields/Lexer.x
+	mkdir -p bootstrapping/Cabal/Distribution/Fields
 	$(call cmd,ALEX) $< -o $@
 else
-CABAL_LEXER_DEP := libraries/Cabal/Cabal/Distribution/Parsec/Lexer.hs
+CABAL_LEXER_DEP := libraries/Cabal/Cabal/Distribution/Fields/Lexer.hs
 endif
 
 $(ghc-cabal_DIST_BINARY): $(wildcard libraries/Cabal/Cabal/Distribution/*/*/*.hs)
 $(ghc-cabal_DIST_BINARY): $(wildcard libraries/Cabal/Cabal/Distribution/*/*.hs)
 $(ghc-cabal_DIST_BINARY): $(wildcard libraries/Cabal/Cabal/Distribution/*.hs)
 
+# N.B. Compile with -O0 since this is not a performance-critical executable
+# and the Cabal takes nearly twice as long to build with -O1. See #16817.
 $(ghc-cabal_DIST_BINARY): $(CABAL_LEXER_DEP) utils/ghc-cabal/Main.hs $(TOUCH_DEP) | $$(dir $$@)/. bootstrapping/.
 	"$(GHC)" $(SRC_HC_OPTS) \
 	       $(addprefix -optc, $(SRC_CC_OPTS) $(CONF_CC_OPTS_STAGE0)) \
 	       $(addprefix -optl, $(SRC_LD_OPTS) $(CONF_GCC_LINKER_OPTS_STAGE0)) \
+				 -O0 \
 	       -hide-all-packages \
 	       $(addprefix -package , $(CABAL_BUILD_DEPS)) \
 	       --make utils/ghc-cabal/Main.hs -o $@ \
-	       -no-user-$(GHC_PACKAGE_DB_FLAG) \
+	       -no-user-package-db \
 	       -Wall -fno-warn-unused-imports -fno-warn-warnings-deprecations \
 	       -DCABAL_VERSION=$(CABAL_VERSION) \
 	       -DCABAL_PARSEC \

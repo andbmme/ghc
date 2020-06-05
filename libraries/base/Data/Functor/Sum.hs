@@ -23,9 +23,7 @@ module Data.Functor.Sum (
 
 import Control.Applicative ((<|>))
 import Data.Data (Data)
-import Data.Foldable (Foldable(foldMap))
 import Data.Functor.Classes
-import Data.Traversable (Traversable(traverse))
 import GHC.Generics (Generic, Generic1)
 import Text.Read (Read(..), readListDefault, readListPrecDefault)
 
@@ -86,6 +84,9 @@ instance (Show1 f, Show1 g, Show a) => Show (Sum f g a) where
 instance (Functor f, Functor g) => Functor (Sum f g) where
     fmap f (InL x) = InL (fmap f x)
     fmap f (InR y) = InR (fmap f y)
+
+    a <$ (InL x) = InL (a <$ x)
+    a <$ (InR y) = InR (a <$ y)
 
 -- | @since 4.9.0.0
 instance (Foldable f, Foldable g) => Foldable (Sum f g) where

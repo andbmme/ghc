@@ -11,18 +11,15 @@ test('ghci001', combined_output, ghci_script, ['ghci001.script'])
 test('ghci002', combined_output, ghci_script, ['ghci002.script'])
 test('ghci003', combined_output, ghci_script, ['ghci003.script'])
 test('ghci004', [ combined_output,
-		  when(arch('powerpc64') or arch('powerpc64le'),
-                       expect_broken_for(11259,['ghci-ext'])),
-                  unless(opsys('mingw32'),extra_ways(['ghci-ext'])) ],
+                  unless(opsys('mingw32') or not (config.have_RTS_linker),extra_ways(['ghci-ext'])) ],
                 ghci_script, ['ghci004.script'])
 test('ghci005', combined_output, ghci_script, ['ghci005.script'])
 test('ghci006', [ combined_output,
-                  when(arch('powerpc64') or arch('powerpc64le'),
-                       expect_broken_for(11259,['ghci-ext'])),
-                  unless(opsys('mingw32'),extra_ways(['ghci-ext'])) ],
+                  unless(opsys('mingw32') or not config.have_RTS_linker,extra_ways(['ghci-ext'])) ],
                 ghci_script, ['ghci006.script'])
 test('ghci007', combined_output, ghci_script, ['ghci007.script'])
-test('ghci008', combined_output, ghci_script, ['ghci008.script'])
+test('ghci008', [ combined_output,
+                  normalise_version('base') ], ghci_script, ['ghci008.script'])
 test('ghci009', combined_output, ghci_script, ['ghci009.script'])
 
 # Skip this test: deadlock cannot be detected now, because we wait for
@@ -53,12 +50,10 @@ test('ghci022', normal, ghci_script, ['ghci022.script'])
 test('ghci023', normal, ghci_script, ['ghci023.script'])
 test('ghci024',
      [req_interp, when(fast(), skip)],
-     run_command,
-     ['$MAKE -s --no-print-directory ghci024'])
+     makefile_test, [])
 test('T9367',
      [req_interp, when(fast() or config.os != 'mingw32', skip)],
-     run_command,
-     ['$MAKE -s --no-print-directory T9367'])
+     makefile_test, [])
 test('ghci025', extra_files(['Ghci025B.hs', 'Ghci025C.hs', 'Ghci025D.hs']), ghci_script, ['ghci025.script'])
 test('ghci026', extra_files(['../prog002']), ghci_script, ['ghci026.script'])
 
@@ -72,7 +67,7 @@ test('ghci033', normal, ghci_script, ['ghci033.script'])
 test('ghci034', normal, ghci_script, ['ghci034.script'])
 test('ghci035', normal, ghci_script, ['ghci035.script'])
 test('ghci036', normal, ghci_script, ['ghci036.script'])
-test('ghci037', req_interp, run_command, ['$MAKE -s --no-print-directory ghci037'])
+test('ghci037', req_interp, makefile_test, [])
 test('ghci038', extra_files(['../shell.hs']), ghci_script, ['ghci038.script'])
 test('ghci039', normal, ghci_script, ['ghci039.script'])
 test('ghci040', normal, ghci_script, ['ghci040.script'])
@@ -95,6 +90,7 @@ test('ghci055', combined_output, ghci_script, ['ghci055.script'])
 
 test('ghci056',
      [pre_cmd('$MAKE -s --no-print-directory ghci056_setup'),
+      when(unregisterised(), fragile(17018)),
       extra_run_opts('ghci056_c.o')],
      ghci_script, ['ghci056.script'])
 
@@ -107,8 +103,11 @@ test('ghci062', [extra_files(['ghci062/', 'ghci062/Test.hs']),
                  when(config.have_ext_interp, extra_ways(['ghci-ext']))],
 		ghci_script, ['ghci062.script'])
 test('ghci063', normal, ghci_script, ['ghci063.script'])
-
-test('T2452', normal, ghci_script, ['T2452.script'])
+test('ghci064', normal, ghci_script, ['ghci064.script'])
+test('ghci065', [extra_hc_opts("-haddock")], ghci_script, ['ghci065.script'])
+test('ghci066', normal, ghci_script, ['ghci066.script'])
+test('T2452', [extra_hc_opts("-fno-implicit-import-qualified")],
+    ghci_script, ['T2452.script'])
 test('T2766', normal, ghci_script, ['T2766.script'])
 
 test('T1914', [], ghci_script, ['T1914.script'])
@@ -155,7 +154,8 @@ test('T6106', [extra_files(['../shell.hs']),
 test('T6105', normal, ghci_script, ['T6105.script'])
 test('T7117', normal, ghci_script, ['T7117.script'])
 test('ghci058', [extra_files(['../shell.hs']),
-                 cmd_prefix('ghciWayFlags=' + config.ghci_way_flags)],
+                 cmd_prefix('ghciWayFlags=' + config.ghci_way_flags),
+                 when(opsys('mingw32'), expect_broken(16858))],
      ghci_script, ['ghci058.script'])
 test('T7587', normal, ghci_script, ['T7587.script'])
 test('T7688', normal, ghci_script, ['T7688.script'])
@@ -176,6 +176,7 @@ test('T8113', normal, ghci_script, ['T8113.script'])
 test('T8172', when(opsys('mingw32'), normalise_drive_letter),
      ghci_script, ['T8172.script'])
 test('T8215', normal, ghci_script, ['T8215.script'])
+test('T8305', normal, ghci_script, ['T8305.script'])
 test('T8353', extra_files(['Defer03.hs']), ghci_script, ['T8353.script'])
 test('T8357', normal, ghci_script, ['T8357.script'])
 test('T8383', normal, ghci_script, ['T8383.script'])
@@ -218,12 +219,12 @@ test('T10122', normal, ghci_script, ['T10122.script'])
 
 test('T10321', normal, ghci_script, ['T10321.script'])
 
-test('T10408', req_interp, run_command,
-    ['$MAKE -s --no-print-directory T10408'])
+test('T10408', req_interp, makefile_test, [])
 test('T10248', normal, ghci_script, ['T10248.script'])
 test('T10110', normal, ghci_script, ['T10110.script'])
 test('T10322', normal, ghci_script, ['T10322.script'])
 test('T10439', normal, ghci_script, ['T10439.script'])
+test('T10453', normal, ghci_script, ['T10453.script'])
 test('T10466', normal, ghci_script, ['T10466.script'])
 test('T10501', normal, ghci_script, ['T10501.script'])
 test('T10508', normal, ghci_script, ['T10508.script'])
@@ -242,7 +243,7 @@ test('T11051a', normal, ghci_script, ['T11051a.script'])
 test('T11051b', normal, ghci_script, ['T11051b.script'])
 test('T11266', ignore_stdout, ghci_script, ['T11266.script'])
 
-test('T11389', req_interp, run_command, ['$MAKE -s --no-print-directory T11389'])
+test('T11389', req_interp, makefile_test, [])
 test('T11524a', normal, ghci_script, ['T11524a.script'])
 test('T11456', normal, ghci_script, ['T11456.script'])
 test('TypeAppData', normal, ghci_script, ['TypeAppData.script'])
@@ -253,14 +254,13 @@ test('T11975', normal, ghci_script, ['T11975.script'])
 test('T10963', normal, ghci_script, ['T10963.script'])
 test('T11721', normal, ghci_script, ['T11721.script'])
 test('T12005', normal, ghci_script, ['T12005.script'])
-test('T12023', normal, run_command,
-               ['$MAKE -s --no-print-directory T12023'])
+test('T12023', normal, makefile_test, [])
 test('T12520', normal, ghci_script, ['T12520.script'])
 test('T12091', [extra_run_opts('-fobject-code')], ghci_script,
      ['T12091.script'])
 test('T12523', normal, ghci_script, ['T12523.script'])
 test('T12024', normal, ghci_script, ['T12024.script'])
-test('T12158', expect_broken(12158), ghci_script, ['T12158.script'])
+test('T12158', normal, ghci_script, ['T12158.script'])
 test('T12447', normal, ghci_script, ['T12447.script'])
 test('T10249', normal, ghci_script, ['T10249.script'])
 test('T12550', normal, ghci_script, ['T12550.script'])
@@ -286,3 +286,32 @@ test('T15341', normal, ghci_script, ['T15341.script'])
 test('T15568', normal, ghci_script, ['T15568.script'])
 test('T15325', normal, ghci_script, ['T15325.script'])
 test('T15591', normal, ghci_script, ['T15591.script'])
+test('T15743b', normal, ghci_script, ['T15743b.script'])
+test('T15827', normal, ghci_script, ['T15827.script'])
+test('T15872', normal, ghci_script, ['T15872.script'])
+test('T15898', normal, ghci_script, ['T15898.script'])
+test('T15941', normal, ghci_script, ['T15941.script'])
+test('T16030', normal, ghci_script, ['T16030.script'])
+test('T11606', normal, ghci_script, ['T11606.script'])
+test('T16089', normal, ghci_script, ['T16089.script'])
+test('T14828', normal, ghci_script, ['T14828.script'])
+test('T16376', normal, ghci_script, ['T16376.script'])
+test('T16527', normal, ghci_script, ['T16527.script'])
+test('T16563', extra_hc_opts("-clear-package-db -global-package-db"), ghci_script, ['T16563.script'])
+test('T16569', normal, ghci_script, ['T16569.script'])
+test('T16767', normal, ghci_script, ['T16767.script'])
+test('T16575', normal, ghci_script, ['T16575.script'])
+test('T16509', normal, ghci_script, ['T16509.script'])
+# Tests :type-at and :uses
+# historical note: introduced to see the changes in the behaviour
+#   when the implementation of :type-at and :uses will be/was changed
+#   to use hie files
+test('T16804', extra_files(['T16804a.hs', 'T16804b.hs', 'T16804c.hs']), ghci_script, ['T16804.script'])
+test('T15546', normal, ghci_script, ['T15546.script'])
+test('T16876', normal, ghci_script, ['T16876.script'])
+test('T17345', normal, ghci_script, ['T17345.script'])
+test('T17384', normal, ghci_script, ['T17384.script'])
+test('T17403', normal, ghci_script, ['T17403.script'])
+test('T17431', normal, ghci_script, ['T17431.script'])
+test('T17549', normal, ghci_script, ['T17549.script'])
+test('T17669', [extra_run_opts('-fexternal-interpreter -fobject-code'), expect_broken(17669)], ghci_script, ['T17669.script'])

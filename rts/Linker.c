@@ -72,10 +72,6 @@
 #  include <mach-o/fat.h>
 #endif
 
-#if defined(x86_64_HOST_ARCH) && defined(darwin_HOST_OS)
-#define ALWAYS_PIC
-#endif
-
 #if defined(dragonfly_HOST_OS)
 #include <sys/tls.h>
 #endif
@@ -162,7 +158,7 @@
    2) The number of duplicate symbols, since now only symbols that are
       true duplicates will display the error.
  */
-/*Str*/HashTable *symhash;
+StrHashTable *symhash;
 
 /* List of currently loaded objects */
 ObjectCode *objects = NULL;     /* initially empty */
@@ -186,35 +182,42 @@ Mutex linker_unloaded_mutex;
 /* Generic wrapper function to try and Resolve and RunInit oc files */
 int ocTryLoad( ObjectCode* oc );
 
-/* Link objects into the lower 2Gb on x86_64.  GHC assumes the
+/* Link objects into the lower 2Gb on x86_64 and AArch64.  GHC assumes the
  * small memory model on this architecture (see gcc docs,
  * -mcmodel=small).
  *
  * MAP_32BIT not available on OpenBSD/amd64
  */
-#if defined(x86_64_HOST_ARCH) && defined(MAP_32BIT)
+#if defined(MAP_32BIT) && defined(x86_64_HOST_ARCH)
+#define MAP_LOW_MEM
 #define TRY_MAP_32BIT MAP_32BIT
 #else
 #define TRY_MAP_32BIT 0
 #endif
 
+#if defined(aarch64_HOST_ARCH)
+// On AArch64 MAP_32BIT is not available but we are still bound by the small
+// memory model. Consequently we still try using the MAP_LOW_MEM allocation
+// strategy.
+#define MAP_LOW_MEM
+#endif
+
 /*
- * Due to the small memory model (see above), on x86_64 we have to map
- * all our non-PIC object files into the low 2Gb of the address space
- * (why 2Gb and not 4Gb?  Because all addresses must be reachable
- * using a 32-bit signed PC-relative offset). On Linux we can do this
- * using the MAP_32BIT flag to mmap(), however on other OSs
- * (e.g. *BSD, see #2063, and also on Linux inside Xen, see #2512), we
- * can't do this.  So on these systems, we have to pick a base address
- * in the low 2Gb of the address space and try to allocate memory from
- * there.
+ * Note [MAP_LOW_MEM]
+ * ~~~~~~~~~~~~~~~~~~
+ * Due to the small memory model (see above), on x86_64 and AArch64 we have to
+ * map all our non-PIC object files into the low 2Gb of the address space (why
+ * 2Gb and not 4Gb?  Because all addresses must be reachable using a 32-bit
+ * signed PC-relative offset). On x86_64 Linux we can do this using the
+ * MAP_32BIT flag to mmap(), however on other OSs (e.g. *BSD, see #2063, and
+ * also on Linux inside Xen, see #2512), we can't do this.  So on these
+ * systems, we have to pick a base address in the low 2Gb of the address space
+ * and try to allocate memory from there.
  *
  * We pick a default address based on the OS, but also make this
  * configurable via an RTS flag (+RTS -xm)
  */
-#if !defined(ALWAYS_PIC) && defined(x86_64_HOST_ARCH)
-
-#if defined(MAP_32BIT)
+#if defined(MAP_32BIT) || DEFAULT_LINKER_ALWAYS_PIC
 // Try to use MAP_32BIT
 #define MMAP_32BIT_BASE_DEFAULT 0
 #else
@@ -223,9 +226,8 @@ int ocTryLoad( ObjectCode* oc );
 #endif
 
 static void *mmap_32bit_base = (void *)MMAP_32BIT_BASE_DEFAULT;
-#endif
 
-static void ghciRemoveSymbolTable(HashTable *table, const SymbolName* key,
+static void ghciRemoveSymbolTable(StrHashTable *table, const SymbolName* key,
     ObjectCode *owner)
 {
     RtsSymbolInfo *pinfo = lookupStrHashTable(table, key);
@@ -256,11 +258,11 @@ static void ghciRemoveSymbolTable(HashTable *table, const SymbolName* key,
 
  Some test have been written for weak symbols but have been disabled
  mostly because it's unsure how the weak symbols support should look.
- See Trac #11223
+ See #11223
  */
 int ghciInsertSymbolTable(
    pathchar* obj_name,
-   HashTable *table,
+   StrHashTable *table,
    const SymbolName* key,
    SymbolAddr* data,
    HsBool weak,
@@ -371,7 +373,7 @@ int ghciInsertSymbolTable(
 * Returns: 0 on failure and result is not set,
 *          nonzero on success and result set to nonzero pointer
 */
-HsBool ghciLookupSymbolInfo(HashTable *table,
+HsBool ghciLookupSymbolInfo(StrHashTable *table,
     const SymbolName* key, RtsSymbolInfo **result)
 {
     RtsSymbolInfo *pinfo = lookupStrHashTable(table, key);
@@ -454,9 +456,7 @@ initLinker_ (int retain_cafs)
         }
         IF_DEBUG(linker, debugBelch("initLinker: inserting rts symbol %s, %p\n", sym->lbl, sym->addr));
     }
-#   if defined(OBJFORMAT_MACHO) && defined(powerpc_HOST_ARCH)
-    machoInitSymbolsWithoutUnderscore();
-#   endif
+
     /* GCC defines a special symbol __dso_handle which is resolved to NULL if
        referenced from a statically linked module. We need to mimic this, but
        we cannot use NULL because we use it to mean nonexistent symbols. So we
@@ -483,7 +483,7 @@ initLinker_ (int retain_cafs)
 #   endif /* RTLD_DEFAULT */
 
     compileResult = regcomp(&re_invalid,
-           "(([^ \t()])+\\.so([^ \t:()])*):([ \t])*(invalid ELF header|file too short|invalid file format)",
+           "(([^ \t()])+\\.so([^ \t:()])*):([ \t])*(invalid ELF header|file too short|invalid file format|Exec format error)",
            REG_EXTENDED);
     if (compileResult != 0) {
         barf("Compiling re_invalid failed");
@@ -496,15 +496,10 @@ initLinker_ (int retain_cafs)
     }
 #   endif
 
-#if !defined(ALWAYS_PIC) && defined(x86_64_HOST_ARCH)
     if (RtsFlags.MiscFlags.linkerMemBase != 0) {
         // User-override for mmap_32bit_base
         mmap_32bit_base = (void*)RtsFlags.MiscFlags.linkerMemBase;
     }
-#endif
-
-    if (RTS_LINKER_USE_MMAP)
-        m32_allocator_init();
 
 #if defined(OBJFORMAT_PEi386)
     initLinker_PEi386();
@@ -529,7 +524,7 @@ exitLinker( void ) {
    }
 #endif
    if (linker_init_done == 1) {
-       freeHashTable(symhash, free);
+       freeStrHashTable(symhash, free);
    }
 #if defined(THREADED_RTS)
    closeMutex(&linker_mutex);
@@ -690,7 +685,7 @@ addDLL( pathchar *dll_name )
       return NULL;
    }
 
-   // GHC Trac ticket #2615
+   // GHC #2615
    // On some systems (e.g., Gentoo Linux) dynamic files (e.g. libc.so)
    // contain linker scripts rather than ELF-format object code. This
    // code handles the situation by recognizing the real object code
@@ -819,7 +814,7 @@ HsBool removeLibrarySearchPath(HsPtr dll_path_index)
 /* -----------------------------------------------------------------------------
  * insert a symbol in the hash table
  *
- * Returns: 0 on failure, nozero on success
+ * Returns: 0 on failure, nonzero on success
  */
 HsInt insertSymbol(pathchar* obj_name, SymbolName* key, SymbolAddr* data)
 {
@@ -896,7 +891,7 @@ SymbolAddr* loadSymbol(SymbolName *lbl, RtsSymbolInfo *pinfo) {
 #if defined(PROFILING)
         // collect any new cost centres & CCSs
         // that were defined during runInit
-        initProfiling2();
+        refreshProfilingCCSs();
 #endif
     }
 
@@ -964,7 +959,7 @@ void ghci_enquire(SymbolAddr* addr)
 
    for (oc = objects; oc; oc = oc->next) {
       for (i = 0; i < oc->n_symbols; i++) {
-         sym = oc->symbols[i];
+         sym = oc->symbols[i].name;
          if (sym == NULL) continue;
          a = NULL;
          if (a == NULL) {
@@ -1009,29 +1004,31 @@ mmapForLinker (size_t bytes, uint32_t flags, int fd, int offset)
    void *map_addr = NULL;
    void *result;
    size_t size;
+   uint32_t tryMap32Bit = RtsFlags.MiscFlags.linkerAlwaysPic
+     ? 0
+     : TRY_MAP_32BIT;
    static uint32_t fixed = 0;
 
    IF_DEBUG(linker, debugBelch("mmapForLinker: start\n"));
    size = roundUpToPage(bytes);
 
-#if !defined(ALWAYS_PIC) && defined(x86_64_HOST_ARCH)
+#if defined(MAP_LOW_MEM)
 mmap_again:
+#endif
 
    if (mmap_32bit_base != 0) {
        map_addr = mmap_32bit_base;
    }
-#endif
 
+   const int prot = PROT_READ | PROT_WRITE;
    IF_DEBUG(linker,
-            debugBelch("mmapForLinker: \tprotection %#0x\n",
-                       PROT_EXEC | PROT_READ | PROT_WRITE));
+            debugBelch("mmapForLinker: \tprotection %#0x\n", prot));
    IF_DEBUG(linker,
             debugBelch("mmapForLinker: \tflags      %#0x\n",
-                       MAP_PRIVATE | TRY_MAP_32BIT | fixed | flags));
+                       MAP_PRIVATE | tryMap32Bit | fixed | flags));
 
-   result = mmap(map_addr, size,
-                 PROT_EXEC|PROT_READ|PROT_WRITE,
-                 MAP_PRIVATE|TRY_MAP_32BIT|fixed|flags, fd, offset);
+   result = mmap(map_addr, size, prot,
+                 MAP_PRIVATE|tryMap32Bit|fixed|flags, fd, offset);
 
    if (result == MAP_FAILED) {
        sysErrorBelch("mmap %" FMT_Word " bytes at %p",(W_)size,map_addr);
@@ -1039,8 +1036,9 @@ mmap_again:
        return NULL;
    }
 
-#if !defined(ALWAYS_PIC) && defined(x86_64_HOST_ARCH)
-   if (mmap_32bit_base != 0) {
+#if defined(MAP_LOW_MEM)
+   if (RtsFlags.MiscFlags.linkerAlwaysPic) {
+   } else if (mmap_32bit_base != 0) {
        if (result == map_addr) {
            mmap_32bit_base = (StgWord8*)map_addr + size;
        } else {
@@ -1093,6 +1091,40 @@ mmap_again:
 
    return result;
 }
+
+/* Note [Memory protection in the linker]
+ * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ * For many years the linker would simply map all of its memory
+ * with PROT_READ|PROT_WRITE|PROT_EXEC. However operating systems have been
+ * becoming increasingly reluctant to accept this practice (e.g. #17353,
+ * #12657) and for good reason: writable code is ripe for exploitation.
+ *
+ * Consequently mmapForLinker now maps its memory with PROT_READ|PROT_WRITE.
+ * After the linker has finished filling/relocating the mapping it must then
+ * call mmapForLinkerMarkExecutable on the sections of the mapping which
+ * contain executable code.
+ *
+ * Note that the m32 allocator handles protection of its allocations. For this
+ * reason the caller to m32_alloc() must tell the allocator whether the
+ * allocation needs to be executable. The caller must then ensure that they
+ * call m32_flush() after they are finished filling the region, which will
+ * cause the allocator to change the protection bits to PROT_READ|PROT_EXEC.
+ *
+ */
+
+/*
+ * Mark an portion of a mapping previously reserved by mmapForLinker
+ * as executable (but not writable).
+ */
+void mmapForLinkerMarkExecutable(void *start, size_t len)
+{
+    IF_DEBUG(linker,
+             debugBelch("mmapForLinkerMarkExecutable: protecting %" FMT_Word
+                        " bytes starting at %p\n", (W_)len, start));
+    if (mprotect(start, len, PROT_READ|PROT_EXEC) == -1) {
+       barf("mmapForLinkerMarkExecutable: mprotect: %s\n", strerror(errno));
+    }
+}
 #endif
 
 /*
@@ -1106,8 +1138,8 @@ static void removeOcSymbols (ObjectCode *oc)
     // Remove all the mappings for the symbols within this object..
     int i;
     for (i = 0; i < oc->n_symbols; i++) {
-        if (oc->symbols[i] != NULL) {
-            ghciRemoveSymbolTable(symhash, oc->symbols[i], oc);
+        if (oc->symbols[i].name != NULL) {
+            ghciRemoveSymbolTable(symhash, oc->symbols[i].name, oc);
         }
     }
 
@@ -1168,7 +1200,7 @@ void freeObjectCode (ObjectCode *oc)
     }
 
     if (oc->extraInfos != NULL) {
-        freeHashTable(oc->extraInfos, NULL);
+        freeStrHashTable(oc->extraInfos, NULL);
         oc->extraInfos = NULL;
     }
 
@@ -1183,11 +1215,16 @@ void freeObjectCode (ObjectCode *oc)
                            oc->sections[i].mapped_size);
                     break;
                 case SECTION_M32:
-                    m32_free(oc->sections[i].start,
-                             oc->sections[i].size);
+                    IF_DEBUG(zero_on_gc,
+                        memset(oc->sections[i].start,
+                            0x00, oc->sections[i].size));
+                    // Freed by m32_allocator_free
                     break;
 #endif
                 case SECTION_MALLOC:
+                    IF_DEBUG(zero_on_gc,
+                        memset(oc->sections[i].start,
+                            0x00, oc->sections[i].size));
                     stgFree(oc->sections[i].start);
                     break;
                 default:
@@ -1202,16 +1239,17 @@ void freeObjectCode (ObjectCode *oc)
     }
 
     freeProddableBlocks(oc);
+    freeSegments(oc);
 
     /* Free symbol_extras.  On x86_64 Windows, symbol_extras are allocated
      * alongside the image, so we don't need to free. */
 #if defined(NEED_SYMBOL_EXTRAS) && (!defined(x86_64_HOST_ARCH) \
                                     || !defined(mingw32_HOST_OS))
     if (RTS_LINKER_USE_MMAP) {
-        if (!USE_CONTIGUOUS_MMAP && oc->symbol_extras != NULL) {
-            m32_free(oc->symbol_extras,
-                    sizeof(SymbolExtra) * oc->n_symbol_extras);
-        }
+      if (!USE_CONTIGUOUS_MMAP && !RtsFlags.MiscFlags.linkerAlwaysPic &&
+          oc->symbol_extras != NULL) {
+        // Freed by m32_allocator_free
+      }
     }
     else {
         stgFree(oc->symbol_extras);
@@ -1223,6 +1261,11 @@ void freeObjectCode (ObjectCode *oc)
 #endif
 #if defined(OBJFORMAT_ELF)
     ocDeinit_ELF(oc);
+#endif
+
+#if RTS_LINKER_USE_MMAP == 1
+    m32_allocator_free(oc->rx_m32);
+    m32_allocator_free(oc->rw_m32);
 #endif
 
     stgFree(oc->fileName);
@@ -1283,14 +1326,19 @@ mkOc( pathchar *path, char *image, int imageSize,
    setOcInitialStatus( oc );
 
    oc->fileSize          = imageSize;
+   oc->n_symbols         = 0;
    oc->symbols           = NULL;
    oc->n_sections        = 0;
    oc->sections          = NULL;
+   oc->n_segments        = 0;
+   oc->segments          = NULL;
    oc->proddables        = NULL;
    oc->stable_ptrs       = NULL;
 #if defined(NEED_SYMBOL_EXTRAS)
    oc->symbol_extras     = NULL;
 #endif
+   oc->bssBegin          = NULL;
+   oc->bssEnd            = NULL;
    oc->imageMapped       = mapped;
 
    oc->misalignment      = misalignment;
@@ -1298,6 +1346,11 @@ mkOc( pathchar *path, char *image, int imageSize,
 
    /* chain it onto the list of objects */
    oc->next              = NULL;
+
+#if RTS_LINKER_USE_MMAP
+   oc->rw_m32 = m32_allocator_new(false);
+   oc->rx_m32 = m32_allocator_new(true);
+#endif
 
    IF_DEBUG(linker, debugBelch("mkOc: done\n"));
    return oc;
@@ -1424,6 +1477,9 @@ preloadObjectFile (pathchar *path)
 
 #endif /* RTS_LINKER_USE_MMAP */
 
+   IF_DEBUG(linker, debugBelch("loadObj: preloaded image at %p\n", (void *) image));
+
+   /* FIXME (AP): =mapped= parameter unconditionally set to true */
    oc = mkOc(path, image, fileSize, true, NULL, misalignment);
 
 #if defined(OBJFORMAT_MACHO)
@@ -1445,7 +1501,7 @@ preloadObjectFile (pathchar *path)
 static HsInt loadObj_ (pathchar *path)
 {
    ObjectCode* oc;
-   IF_DEBUG(linker, debugBelch("loadObj %" PATH_FMT "\n", path));
+   IF_DEBUG(linker, debugBelch("loadObj: %" PATH_FMT "\n", path));
 
    /* debugBelch("loadObj %s\n", path ); */
 
@@ -1504,17 +1560,39 @@ HsInt loadOc (ObjectCode* oc)
    }
 
    /* Note [loadOc orderings]
-      ocAllocateSymbolsExtras has only two pre-requisites, it must run after
-      preloadObjectFile and ocVerify.   Neither have changed.   On most targets
-      allocating the extras is independent on parsing the section data, so the
-      order between these two never mattered.
+      The order of `ocAllocateExtras` and `ocGetNames` matters. For MachO
+      and ELF, `ocInit` and `ocGetNames` initialize a bunch of pointers based
+      on the offset to `oc->image`, but `ocAllocateExtras` may relocate
+      the address of `oc->image` and invalidate those pointers. So we must
+      compute or recompute those pointers after `ocAllocateExtras`.
 
       On Windows, when we have an import library we (for now, as we don't honor
       the lazy loading semantics of the library and instead GHCi is already
       lazy) don't use the library after ocGetNames as it just populates the
-      symbol table.  Allocating space for jump tables in ocAllocateSymbolExtras
+      symbol table.  Allocating space for jump tables in ocAllocateExtras
       would just be a waste then as we'll be stopping further processing of the
-      library in the next few steps.  */
+      library in the next few steps. If necessary, the actual allocation
+      happens in `ocGetNames_PEi386` and `ocAllocateExtras_PEi386` simply
+      set the correct pointers.
+      */
+
+#if defined(NEED_SYMBOL_EXTRAS)
+#  if defined(OBJFORMAT_MACHO)
+   r = ocAllocateExtras_MachO ( oc );
+   if (!r) {
+       IF_DEBUG(linker,
+                debugBelch("loadOc: ocAllocateExtras_MachO failed\n"));
+       return r;
+   }
+#  elif defined(OBJFORMAT_ELF)
+   r = ocAllocateExtras_ELF ( oc );
+   if (!r) {
+       IF_DEBUG(linker,
+                debugBelch("loadOc: ocAllocateExtras_ELF failed\n"));
+       return r;
+   }
+#  endif
+#endif
 
    /* build the symbol list for this image */
 #  if defined(OBJFORMAT_ELF)
@@ -1532,22 +1610,8 @@ HsInt loadOc (ObjectCode* oc)
    }
 
 #if defined(NEED_SYMBOL_EXTRAS)
-#  if defined(OBJFORMAT_MACHO)
-   r = ocAllocateSymbolExtras_MachO ( oc );
-   if (!r) {
-       IF_DEBUG(linker,
-                debugBelch("loadOc: ocAllocateSymbolExtras_MachO failed\n"));
-       return r;
-   }
-#  elif defined(OBJFORMAT_ELF)
-   r = ocAllocateSymbolExtras_ELF ( oc );
-   if (!r) {
-       IF_DEBUG(linker,
-                debugBelch("loadOc: ocAllocateSymbolExtras_ELF failed\n"));
-       return r;
-   }
-#  elif defined(OBJFORMAT_PEi386)
-   ocAllocateSymbolExtras_PEi386 ( oc );
+#  if defined(OBJFORMAT_PEi386)
+   ocAllocateExtras_PEi386 ( oc );
 #  endif
 #endif
 
@@ -1576,18 +1640,21 @@ int ocTryLoad (ObjectCode* oc) {
         are to be loaded by this call.
 
         This call is intended to have no side-effects when a non-duplicate
-        symbol is re-inserted.
+        symbol is re-inserted.  A symbol is only a duplicate if the object file
+        it is defined in has had it's relocations resolved.  A resolved object
+        file means the symbols inside it are required.
 
-        We set the Address to NULL since that is not used to distinguish
-        symbols. Duplicate symbols are distinguished by name and oc.
+        The symbol address is not used to distinguish symbols. Duplicate symbols
+        are distinguished by name, oc and attributes (weak symbols etc).
     */
     int x;
-    SymbolName* symbol;
+    Symbol_t symbol;
     for (x = 0; x < oc->n_symbols; x++) {
         symbol = oc->symbols[x];
-        if (   symbol
-            && !ghciInsertSymbolTable(oc->fileName, symhash, symbol, NULL,
-                                      isSymbolWeak(oc, symbol), oc)) {
+        if (   symbol.name
+            && !ghciInsertSymbolTable(oc->fileName, symhash, symbol.name,
+                                      symbol.addr,
+                                      isSymbolWeak(oc, symbol.name), oc)) {
             return 0;
         }
     }
@@ -1603,7 +1670,20 @@ int ocTryLoad (ObjectCode* oc) {
 #   endif
     if (!r) { return r; }
 
+#if defined(NEED_SYMBOL_EXTRAS)
+    ocProtectExtras(oc);
+#endif
+
+    // We have finished loading and relocating; flush the m32 allocators to
+    // setup page protections.
+#if RTS_LINKER_USE_MMAP
+    m32_allocator_flush(oc->rx_m32);
+    m32_allocator_flush(oc->rw_m32);
+#endif
+
     // run init/init_array/ctors/mod_init_func
+
+    IF_DEBUG(linker, debugBelch("ocTryLoad: ocRunInit start\n"));
 
     loading_obj = oc; // tells foreignExportStablePtr what to do
 #if defined(OBJFORMAT_ELF)
@@ -1646,7 +1726,7 @@ static HsInt resolveObjs_ (void)
 
 #if defined(PROFILING)
     // collect any new cost centres & CCSs that were defined during runInit
-    initProfiling2();
+    refreshProfilingCCSs();
 #endif
 
     IF_DEBUG(linker, debugBelch("resolveObjs: done\n"));
@@ -1808,8 +1888,8 @@ void freeProddableBlocks (ObjectCode *oc)
  */
 void
 addSection (Section *s, SectionKind kind, SectionAlloc alloc,
-            void* start, StgWord size, StgWord mapped_offset,
-            void* mapped_start, StgWord mapped_size)
+            void* start, StgWord size,
+            StgWord mapped_offset, void* mapped_start, StgWord mapped_size)
 {
    s->start        = start;     /* actual start of section in memory */
    s->size         = size;      /* actual size of section in memory */
@@ -1831,3 +1911,48 @@ addSection (Section *s, SectionKind kind, SectionAlloc alloc,
                        size, kind ));
 }
 
+/* -----------------------------------------------------------------------------
+ * Segment management
+ */
+void
+initSegment (Segment *s, void *start, size_t size, SegmentProt prot, int n_sections)
+{
+    s->start = start;
+    s->size = size;
+    s->prot = prot;
+    s->sections_idx = (int *)stgCallocBytes(n_sections, sizeof(int),
+                                               "initSegment(segment)");
+    s->n_sections = n_sections;
+}
+
+void freeSegments (ObjectCode *oc)
+{
+    if (oc->segments != NULL) {
+        IF_DEBUG(linker, debugBelch("freeSegments: freeing %d segments\n", oc->n_segments));
+
+        for (int i = 0; i < oc->n_segments; i++) {
+            Segment *s = &oc->segments[i];
+
+            IF_DEBUG(linker, debugBelch("freeSegments: freeing segment %d at %p size %zu\n",
+                                        i, s->start, s->size));
+
+            stgFree(s->sections_idx);
+            s->sections_idx = NULL;
+
+            if (0 == s->size) {
+                IF_DEBUG(linker, debugBelch("freeSegment: skipping segment of 0 size\n"));
+                continue;
+            } else {
+#if RTS_LINKER_USE_MMAP
+                CHECKM(0 == munmap(s->start, s->size), "freeSegments: failed to unmap memory");
+#else
+                stgFree(s->start);
+#endif
+            }
+            s->start = NULL;
+        }
+
+        stgFree(oc->segments);
+        oc->segments = NULL;
+    }
+}

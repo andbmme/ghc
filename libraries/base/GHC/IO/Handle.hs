@@ -45,7 +45,7 @@ module GHC.IO.Handle (
 
    hShow,
 
-   hWaitForInput, hGetChar, hGetLine, hGetContents, hPutChar, hPutStr,
+   hWaitForInput, hGetChar, hGetLine, hGetContents, hGetContents', hPutChar, hPutStr,
 
    hGetBuf, hGetBufNonBlocking, hPutBuf, hPutBufNonBlocking
  ) where
@@ -604,7 +604,7 @@ hSetBinaryMode handle bin =
 -- data is flushed first.
 hSetNewlineMode :: Handle -> NewlineMode -> IO ()
 hSetNewlineMode handle NewlineMode{ inputNL=i, outputNL=o } =
-  withAllHandles__ "hSetNewlineMode" handle $ \h_@Handle__{..} ->
+  withAllHandles__ "hSetNewlineMode" handle $ \h_@Handle__{} ->
     do
          flushBuffer h_
          return h_{ haInputNL=i, haOutputNL=o }
@@ -676,21 +676,23 @@ This can be used to retarget the standard Handles, for example:
 hDuplicateTo :: Handle -> Handle -> IO ()
 hDuplicateTo h1@(FileHandle path m1) h2@(FileHandle _ m2)  = do
  withHandle__' "hDuplicateTo" h2 m2 $ \h2_ -> do
-   _ <- hClose_help h2_
+   try $ flushWriteBuffer h2_
    withHandle_' "hDuplicateTo" h1 m1 $ \h1_ -> do
      dupHandleTo path h1 Nothing h2_ h1_ (Just handleFinalizer)
 hDuplicateTo h1@(DuplexHandle path r1 w1) h2@(DuplexHandle _ r2 w2)  = do
  withHandle__' "hDuplicateTo" h2 w2  $ \w2_ -> do
-   _ <- hClose_help w2_
+   try $ flushWriteBuffer w2_
    withHandle_' "hDuplicateTo" h1 w1 $ \w1_ -> do
      dupHandleTo path h1 Nothing w2_ w1_ (Just handleFinalizer)
  withHandle__' "hDuplicateTo" h2 r2  $ \r2_ -> do
-   _ <- hClose_help r2_
+   try $ flushWriteBuffer r2_
    withHandle_' "hDuplicateTo" h1 r1 $ \r1_ -> do
      dupHandleTo path h1 (Just w1) r2_ r1_ Nothing
 hDuplicateTo h1 _ =
   ioe_dupHandlesNotCompatible h1
 
+try :: IO () -> IO ()
+try io = io `catchException` (const (pure ()) :: SomeException -> IO ())
 
 ioe_dupHandlesNotCompatible :: Handle -> IO a
 ioe_dupHandlesNotCompatible h =
@@ -705,7 +707,7 @@ dupHandleTo :: FilePath
             -> Maybe HandleFinalizer
             -> IO Handle__
 dupHandleTo filepath h other_side
-            hto_@Handle__{haDevice=devTo,..}
+            hto_@Handle__{haDevice=devTo}
             h_@Handle__{haDevice=dev} mb_finalizer = do
   flushBuffer h_
   case cast devTo of

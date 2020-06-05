@@ -81,11 +81,11 @@ given compilation phase:
     Use ⟨cmd⟩ as the DLL generator.
 
 .. ghc-flag:: -pgmF ⟨cmd⟩
-    :shortdesc: Use ⟨cmd⟩ as the pre-processor (with ``-F`` only)
+    :shortdesc: Use ⟨cmd⟩ as the pre-processor (with :ghc-flag:`-F` only)
     :type: dynamic
     :category: phase-programs
 
-    Use ⟨cmd⟩ as the pre-processor (with ``-F`` only).
+    Use ⟨cmd⟩ as the pre-processor (with :ghc-flag:`-F` only).
 
 .. ghc-flag:: -pgmwindres ⟨cmd⟩
     :shortdesc: Use ⟨cmd⟩ as the program for embedding manifests on Windows.
@@ -98,20 +98,20 @@ given compilation phase:
     :ref:`options-linker`.
 
 .. ghc-flag:: -pgmlibtool ⟨cmd⟩
-    :shortdesc: Use ⟨cmd⟩ as the command for libtool (with ``-staticlib`` only).
+    :shortdesc: Use ⟨cmd⟩ as the command for libtool (with :ghc-flag:`-staticlib` only).
     :type: dynamic
     :category: phase-programs
 
-    Use ⟨cmd⟩ as the libtool command (when using ``-staticlib`` only).
+    Use ⟨cmd⟩ as the libtool command (when using :ghc-flag:`-staticlib` only).
 
 .. ghc-flag:: -pgmi ⟨cmd⟩
     :shortdesc: Use ⟨cmd⟩ as the external interpreter command.
     :type: dynamic
     :category: phase-programs
 
-    Use ⟨cmd⟩ as the external interpreter command (see:
+    Use ⟨cmd⟩ as the external interpreter command (see
     :ref:`external-interpreter`).  Default: ``ghc-iserv-prof`` if
-    ``-prof`` is enabled, ``ghc-iserv-dyn`` if ``-dynamic`` is
+    :ghc-flag:`-prof` is enabled, ``ghc-iserv-dyn`` if :ghc-flag:`-dynamic` is
     enabled, or ``ghc-iserv`` otherwise.
 
 .. _forcing-options-through:
@@ -153,6 +153,13 @@ the following flags:
     :category: phase-options
 
     Pass ⟨option⟩ to the C compiler.
+
+.. ghc-flag:: -optcxx ⟨option⟩
+    :shortdesc: pass ⟨option⟩ to the C++ compiler
+    :type: dynamic
+    :category: phase-options
+
+    Pass ⟨option⟩ to the C++ compiler.
 
 .. ghc-flag:: -optlo ⟨option⟩
     :shortdesc: pass ⟨option⟩ to the LLVM optimiser
@@ -226,6 +233,19 @@ Options affecting the C pre-processor
 
     :since: 6.8.1
 
+    The :extension:`CPP` language extension enables the C pre-processor.
+    This can be turned into a command-line flag by prefixing it with
+    ``-X``; For example:
+
+    .. code-block:: sh
+
+        $ ghc -XCPP foo.hs
+
+    The :extension:`CPP` language extension can also be enabled using
+    the :ref:`LANGUAGE <language-pragma>` pragma; For example: ::
+
+        {-# LANGUAGE CPP #-}
+
 .. index::
    single: pre-processing: cpp
    single: C pre-processor options
@@ -236,8 +256,8 @@ Options affecting the C pre-processor
     :type: dynamic
     :category: cpp
 
-    The C pre-processor :command:`cpp` is run over your Haskell code only if
-    the ``-cpp`` option -cpp option is given. Unless you are building a
+    The C pre-processor :command:`cpp` is run over your Haskell code if
+    the ``-cpp`` option or ``-XCPP`` extension are given. Unless you are building a
     large system with significant doses of conditional compilation, you
     really shouldn't need it.
 
@@ -358,7 +378,7 @@ defined by your local GHC installation, the following trick is useful:
 
     .. code-block:: c
 
-        #ifdef MIN_VERSION_GLASGOW_HASKELL
+        #if defined(MIN_VERSION_GLASGOW_HASKELL)
         #if MIN_VERSION_GLASGOW_HASKELL(7,10,2,0)
         /* code that applies only to GHC 7.10.2 or later */
         #endif
@@ -732,21 +752,6 @@ for example).
     option for Apple's Linker (``-F`` already means something else for
     GHC).
 
-.. ghc-flag:: -split-objs
-    :shortdesc: Split objects (for libraries)
-    :type: dynamic
-    :category: linking
-
-    Tell the linker to split the single object file that would normally
-    be generated into multiple object files, one per top-level Haskell
-    function or type in the module. This only makes sense for libraries,
-    where it means that executables linked against the library are
-    smaller as they only link against the object files that they need.
-    However, assembling all the sections separately is expensive, so
-    this is slower than compiling normally. Additionally, the size of
-    the library itself (the ``.a`` file) can be a factor of 2 to 2.5
-    larger. We use this feature for building GHC's libraries.
-
 .. ghc-flag:: -split-sections
     :shortdesc: Split sections for link-time dead-code stripping
     :type: dynamic
@@ -758,9 +763,7 @@ for example).
     output file.
 
     When linking, the linker can automatically remove all unreferenced sections
-    and thus produce smaller executables. The effect is similar to
-    :ghc-flag:`-split-objs`, but somewhat more efficient - the generated library
-    files are about 30% smaller than with :ghc-flag:`-split-objs`.
+    and thus produce smaller executables.
 
 .. ghc-flag:: -static
     :shortdesc: Use static Haskell libraries
@@ -804,7 +807,8 @@ for example).
 
     When creating shared objects for Haskell packages, the shared object
     must be named properly, so that GHC recognizes the shared object
-    when linked against this package. See shared object name mangling.
+    when linking against this package.
+    See :ref:`shared object name mangling <building-packages>` for details.
 
 .. ghc-flag:: -dynload
     :shortdesc: Selects one of a number of modes for finding shared libraries at runtime.
@@ -947,7 +951,7 @@ for example).
     :type: dynamic
     :category: linking
 
-    :default: all
+    :default: some
 
     This option affects the processing of RTS control options given
     either on the command line or via the :envvar:`GHCRTS` environment
@@ -1029,7 +1033,7 @@ for example).
     :type: dynamic
     :category: linking
 
-    On Windows, GHC normally generates a manifestmanifest file when
+    On Windows, GHC normally generates a manifest file when
     linking a binary. The manifest is placed in the file
     :file:`{prog}.exe.manifest`` where ⟨prog.exe⟩ is the name of the
     executable. The manifest file currently serves just one purpose: it

@@ -13,7 +13,7 @@ dnl
 # see what flags are available. (Better yet, read the documentation!)
 #
 
-AC_INIT([The Glorious Glasgow Haskell Compilation System], [8.7], [glasgow-haskell-bugs@haskell.org], [ghc-AC_PACKAGE_VERSION])
+AC_INIT([The Glorious Glasgow Haskell Compilation System], [8.11.0], [glasgow-haskell-bugs@haskell.org], [ghc-AC_PACKAGE_VERSION])
 
 # Set this to YES for a released version, otherwise NO
 : ${RELEASE=NO}
@@ -30,8 +30,6 @@ if test ! -f mk/config.h.in; then
    echo "mk/config.h.in doesn't exist: perhaps you haven't run 'python3 boot'?"
    exit 1
 fi
-
-AC_SUBST([CONFIGURE_ARGS], [$ac_configure_args])
 
 dnl this makes sure `./configure --target=<cross-compile-target>`
 dnl works as expected, since we're slightly modifying how Autoconf
@@ -87,18 +85,12 @@ dnl use either is considered a Feature.
 dnl ** What command to use to compile compiler sources ?
 dnl --------------------------------------------------------------
 
+AC_ARG_VAR(GHC,[Use as the path to GHC [default=autodetect]])
+AC_PATH_PROG([GHC], [ghc])
 AC_ARG_WITH([ghc],
-[AC_HELP_STRING([--with-ghc=ARG],
-  [Use ARG as the path to GHC  [default=autodetect]])],
-  [WithGhc="$withval"],
-  [if test "$GHC" = ""; then
-    AC_PATH_PROG([GHC], [ghc])
-  fi
-  WithGhc="$GHC"])
-
-dnl ** Tell the make system which OS we are using
-dnl $OSTYPE is set by the operating system to "msys" or "cygwin" or something
-AC_SUBST(OSTYPE)
+        AS_HELP_STRING([--with-ghc=ARG], [Use ARG as the path to ghc (obsolete, use GHC=ARG instead) [default=autodetect]]),
+        AC_MSG_ERROR([--with-ghc=$withval is obsolete (use './configure GHC=$withval' or 'GHC=$withval ./configure' instead)]))
+AC_SUBST(WithGhc,$GHC)
 
 AC_ARG_ENABLE(bootstrap-with-devel-snapshot,
 [AC_HELP_STRING([--enable-bootstrap-with-devel-snapshot],
@@ -125,9 +117,15 @@ if test "$EnableDistroToolchain" = "YES"; then
   TarballsAutodownload=NO
 fi
 
-dnl CC_STAGE0 is like the "previous" variable CC (inherited by CC_STAGE[123])
+dnl CC_STAGE0, LD_STAGE0, AR_STAGE0 are like the "previous" variable
+dnl CC, LD, AR (inherited by CC_STAGE[123], etc.)
 dnl but instead used by stage0 for bootstrapping stage1
 AC_ARG_VAR(CC_STAGE0, [C compiler command (bootstrap)])
+AC_ARG_VAR(LD_STAGE0, [Linker command (bootstrap)])
+AC_ARG_VAR(AR_STAGE0, [Archive command (bootstrap)])
+
+dnl RTS ways supplied by the bootstrapping compiler.
+AC_ARG_VAR(RTS_WAYS_STAGE0, [RTS ways])
 
 if test "$WithGhc" != ""; then
   FPTOOLS_GHC_VERSION([GhcVersion], [GhcMajVersion], [GhcMinVersion], [GhcPatchLevel])dnl
@@ -143,15 +141,30 @@ if test "$WithGhc" != ""; then
   GhcMinVersion2=`echo "$GhcMinVersion" | sed 's/^\\(.\\)$/0\\1/'`
   GhcCanonVersion="$GhcMajVersion$GhcMinVersion2"
 
-  dnl infer CC_STAGE0 from `ghc --info` unless explicitly set by user
+  dnl infer {CC,LD,AR}_STAGE0 from `ghc --info` unless explicitly set by user
   if test -z "$CC_STAGE0"; then
     BOOTSTRAPPING_GHC_INFO_FIELD([CC_STAGE0],[C compiler command])
   fi
 
-  BOOTSTRAPPING_GHC_INFO_FIELD([LD_STAGE0],[ld command])
-  BOOTSTRAPPING_GHC_INFO_FIELD([AR_STAGE0],[ar command])
+  if test -z "$LD_STAGE0"; then
+    BOOTSTRAPPING_GHC_INFO_FIELD([LD_STAGE0],[ld command])
+  fi
+  if test -z "$AR_STAGE0"; then
+    BOOTSTRAPPING_GHC_INFO_FIELD([AR_STAGE0],[ar command])
+  fi
   BOOTSTRAPPING_GHC_INFO_FIELD([AR_OPTS_STAGE0],[ar flags])
   BOOTSTRAPPING_GHC_INFO_FIELD([ArSupportsAtFile_STAGE0],[ar supports at file])
+  BOOTSTRAPPING_GHC_INFO_FIELD([RTS_WAYS_STAGE0],[RTS ways])
+
+  dnl Check whether or not the bootstrapping GHC has a threaded RTS. This
+  dnl determines whether or not we can have a threaded stage 1.
+  dnl See Note [Linking ghc-bin against threaded stage0 RTS] in
+  dnl hadrian/src/Settings/Packages.hs for details.
+  if echo ${RTS_WAYS_STAGE0} | grep '.*thr.*' 2>&1 >/dev/null; then
+      AC_SUBST(GhcThreadedRts, YES)
+  else
+      AC_SUBST(GhcThreadedRts, NO)
+  fi
 fi
 
 dnl ** Must have GHC to build GHC
@@ -159,8 +172,8 @@ if test "$WithGhc" = ""
 then
     AC_MSG_ERROR([GHC is required.])
 fi
-FP_COMPARE_VERSIONS([$GhcVersion],[-lt],[8.4],
-    [AC_MSG_ERROR([GHC version 8.4 or later is required to compile GHC.])])
+FP_COMPARE_VERSIONS([$GhcVersion],[-lt],[8.8],
+    [AC_MSG_ERROR([GHC version 8.8 or later is required to compile GHC.])])
 
 if test `expr $GhcMinVersion % 2` = "1"
 then
@@ -170,12 +183,9 @@ then
      $WithGhc is a development snapshot of GHC, version $GhcVersion.
      Bootstrapping using this version of GHC is not supported, and may not
      work.  Use --enable-bootstrap-with-devel-snapshot to try it anyway,
-     or --with-ghc to specify a different GHC to use.])
+     or 'GHC=' to specify a different GHC to use.])
     fi
 fi
-
-GHC_PACKAGE_DB_FLAG=package-db
-AC_SUBST(GHC_PACKAGE_DB_FLAG)
 
 # GHC is passed to Cabal, so we need a native path
 if test "${WithGhc}" != ""
@@ -252,47 +262,84 @@ AC_SUBST(SOLARIS_BROKEN_SHLD)
 
 dnl ** Do an unregisterised build?
 dnl --------------------------------------------------------------
+
+AC_MSG_CHECKING(whether target supports a registerised ABI)
 case "$TargetArch" in
-    i386|x86_64|powerpc|powerpc64|powerpc64le|arm|aarch64)
+    i386|x86_64|powerpc|powerpc64|powerpc64le|s390x|arm|aarch64)
         UnregisterisedDefault=NO
+        AC_MSG_RESULT([yes])
         ;;
     *)
         UnregisterisedDefault=YES
+        AC_MSG_RESULT([no])
         ;;
 esac
-AC_ARG_ENABLE(unregisterised,
-[AC_HELP_STRING([--enable-unregisterised],
-[Build an unregisterised compiler (enabled by default on platforms without registerised support) [default="$UnregisterisedDefault"]])],
-[ if test x"$enableval" = x"yes"; then
-        Unregisterised=YES
-  else
-        Unregisterised=NO
-  fi
-],
-[Unregisterised="$UnregisterisedDefault"]
-)
+FP_DEFAULT_CHOICE_OVERRIDE_CHECK(
+  [unregisterised],
+  [unregisterised],
+  [registerised],
+  [Unregisterised],
+  [Build a toolchain with the unregisterised ABI (disabled by default on platforms with registerised support)],
+  [NO],
+  [YES],
+  [no])
 AC_SUBST(Unregisterised)
+
+dnl ** Do a build with tables next to code?
+dnl
+dnl Whether the target architecture supports placing info tables
+dnl directly before the entry code (see TABLES_NEXT_TO_CODE in the RTS).
+dnl Whether we actually compile for TABLES_NEXT_TO_CODE depends on
+dnl whether we're building unregisterised code or not, which may be
+dnl decided by options to the compiler later.
+dnl
+dnl See https://gitlab.haskell.org/ghc/ghc/wikis/commentary/rts/storage/heap-objects#tables_next_to_code
+dnl --------------------------------------------------------------
+
+AC_MSG_CHECKING(whether target supports tables next to code)
+case "$Unregisterised" in
+    NO)
+        case "$TargetArch" in
+            ia64|powerpc64|powerpc64le|s390x)
+                TablesNextToCodeDefault=NO
+                AC_MSG_RESULT([no])
+                ;;
+            *)
+                TablesNextToCodeDefault=YES
+                AC_MSG_RESULT([yes])
+                ;;
+        esac
+        ;;
+    YES)
+        TablesNextToCodeDefault=NO
+        AC_MSG_RESULT([no])
+        ;;
+esac
+FP_DEFAULT_CHOICE_OVERRIDE_CHECK(
+  [tables-next-to-code],
+  [tables next to code],
+  [tables apart from code],
+  [TablesNextToCode],
+  [Build a tool chain with info tables laid out next to code (enabled by default when using the registerised ABI, on platforms that support it)])
+if test x"$TablesNextToCode" = xYES; then
+   AC_DEFINE([TABLES_NEXT_TO_CODE], [1], [Define to 1 if info tables are laid out next to code])
+fi
+AC_SUBST(TablesNextToCode)
 
 dnl ** Does target have runtime linker support?
 dnl --------------------------------------------------------------
 case "$target" in
-    powerpc64-*|powerpc64le-*|powerpc-ibm-aix*)
-        HaskellHaveRTSLinker=NO
+    powerpc64-*|powerpc64le-*|powerpc-ibm-aix*|s390x-ibm-linux)
+        TargetHasRTSLinker=NO
         ;;
     *)
-        HaskellHaveRTSLinker=YES
+        TargetHasRTSLinker=YES
         ;;
 esac
-AC_SUBST(HaskellHaveRTSLinker)
+AC_SUBST(TargetHasRTSLinker)
 
 # Requires FPTOOLS_SET_PLATFORM_VARS to be run first.
 FP_FIND_ROOT
-
-fail() {
-    echo >&2
-    echo "$1" >&2
-    exit 1
-}
 
 
 if test "$HostOS" = "mingw32"
@@ -303,7 +350,7 @@ then
     if test "$HostArch" = "i386"
     then
         mingw_arch="i686"
-        tarball_dest_dir="mingw-w64/x86"
+        tarball_dest_dir="mingw-w64/i686"
         tarball_mingw_dir="mingw32"
     else
         mingw_arch="x86_64"
@@ -321,7 +368,7 @@ set_up_tarballs() {
     else
         action="download"
     fi
-    mk/get-win32-tarballs.sh $action $HostArch > missing-win32-tarballs
+    $PYTHON mk/get-win32-tarballs.py $action $mingw_arch > missing-win32-tarballs
     case $? in
         0)
            rm missing-win32-tarballs
@@ -333,7 +380,7 @@ set_up_tarballs() {
            echo
            echo "  * run configure with the --enable-tarballs-autodownload option"
            echo
-           echo "  * run mk/get-win32-tarballs.sh download ${HostArch}"
+           echo "  * run mk/get-win32-tarballs.py download $mingw_arch"
            echo
            echo "  * manually download the files listed in ./missing-win32-tarballs and place"
            echo "    them in the ghc-tarballs directory."
@@ -357,7 +404,7 @@ set_up_tarballs() {
         find "${base_dir}" -name "*.tar.xz" -exec tar xfJ {} \; &&
         rm ".MTREE" &&
         rm ".PKGINFO" &&
-        cd .. ) || fail "Error: Could not extract Windows toolchains."
+        cd .. ) || AC_MSG_ERROR([Could not extract Windows toolchains.])
 
         mv "inplace/${tarball_mingw_dir}" inplace/mingw &&
         touch inplace/mingw
@@ -388,20 +435,6 @@ then
     fp_prog_ar="${mingwbin}ar.exe"
 
     AC_PATH_PROG([Genlib],[genlib])
-
-    # NB. Download the perl binaries if required
-    if ! test -d inplace/perl ||
-         test inplace/perl -ot ghc-tarballs/perl/ghc-perl*.tar.gz
-    then
-        AC_MSG_NOTICE([Making in-tree perl tree])
-        rm -rf inplace/perl
-        mkdir inplace/perl
-        (
-            cd inplace/perl &&
-            tar -zxf ../../ghc-tarballs/perl/ghc-perl*.tar.gz
-        )
-        AC_MSG_NOTICE([In-tree perl tree created])
-    fi
 fi
 
 # We don't want to bundle a MinGW-w64 toolchain
@@ -446,6 +479,12 @@ FP_ICONV
 FP_GMP
 FP_CURSES
 
+dnl On Windows we force in-tree GMP build until we support dynamic linking
+if test "$HostOS" = "mingw32"
+then
+  GMP_FORCE_INTREE="YES"
+fi
+
 XCODE_VERSION()
 
 
@@ -453,7 +492,7 @@ dnl ** Building a cross compiler?
 dnl --------------------------------------------------------------
 CrossCompiling=NO
 # If 'host' and 'target' differ, then this means we are building a cross-compiler.
-if test "$TargetPlatform" != "$HostPlatform" ; then
+if test "$target" != "$host" ; then
     CrossCompiling=YES
     cross_compiling=yes   # This tells configure that it can accept just 'target',
                           # otherwise you get
@@ -518,12 +557,12 @@ AC_ARG_WITH([gcc],
         AC_MSG_ERROR([--with-gcc=$withval is obsolete (use './configure CC=$withval' or 'CC=$withval ./configure' instead)]))
 
 AC_ARG_WITH([clang],
-        AS_HELP_STRING([--with-clang=ARG], [Use ARG as the path to gcc (obsolete, use CC=ARG instead) [default=autodetect]]),
+        AS_HELP_STRING([--with-clang=ARG], [Use ARG as the path to clang (obsolete, use CC=ARG instead) [default=autodetect]]),
         AC_MSG_ERROR([--with-clang=$withval is obsolete (use './configure CC=$withval' or 'CC=$withval ./configure' instead)]))
 
 dnl detect compiler (prefer gcc over clang) and set $CC (unless CC already set),
 dnl later CC is copied to CC_STAGE{1,2,3}
-AC_PROG_CC([gcc clang])
+AC_PROG_CC([cc gcc clang])
 
 MAYBE_OVERRIDE_STAGE0([ar],[AR_STAGE0])
 
@@ -545,6 +584,7 @@ FP_SET_CFLAGS_C99([CC],[CONF_CC_OPTS_STAGE2],[CONF_CPP_OPTS_STAGE2])
 
 dnl ** Which ld to use
 dnl --------------------------------------------------------------
+AC_ARG_VAR(LD,[Use as the path to ld. See also --disable-ld-override.])
 FIND_LD([$target],[GccUseLdOpt])
 CONF_GCC_LINKER_OPTS_STAGE1="$CONF_GCC_LINKER_OPTS_STAGE1 $GccUseLdOpt"
 CONF_GCC_LINKER_OPTS_STAGE2="$CONF_GCC_LINKER_OPTS_STAGE2 $GccUseLdOpt"
@@ -573,15 +613,15 @@ AC_SUBST([NmCmd])
 if test "$TargetOS_CPP" = "darwin"
 then
     AC_MSG_CHECKING(whether nm program is broken)
-    # Some versions of XCode ship a broken version of `nm`. Detect and work
-    # around this issue. See : https://ghc.haskell.org/trac/ghc/ticket/11744
+    # Some versions of Xcode ship a broken version of `nm`. Detect and work
+    # around this issue. See : https://gitlab.haskell.org/ghc/ghc/issues/11744
     nmver=$(${NM} --version | grep version | sed 's/ //g')
     case "$nmver" in
         LLVMversion7.3.0|LLVMversion7.3.1)
             AC_MSG_RESULT(yes)
             echo "The detected nm program is broken."
             echo
-            echo "See: https://ghc.haskell.org/trac/ghc/ticket/11744"
+            echo "See: https://gitlab.haskell.org/ghc/ghc/issues/11744"
             echo
             echo "Try re-running configure with:"
             echo
@@ -643,25 +683,28 @@ AC_SUBST([LibtoolCmd])
 # tools we are looking for. In the past, GHC supported a number of
 # versions of LLVM simultaneously, but that stopped working around
 # 3.5/3.6 release of LLVM.
-LlvmVersion=6.0
+LlvmVersion=9
 AC_SUBST([LlvmVersion])
 sUPPORTED_LLVM_VERSION=$(echo \($LlvmVersion\) | sed 's/\./,/')
 AC_DEFINE_UNQUOTED([sUPPORTED_LLVM_VERSION], ${sUPPORTED_LLVM_VERSION}, [The supported LLVM version number])
 
 dnl ** Which LLVM clang to use?
 dnl --------------------------------------------------------------
+AC_ARG_VAR(CLANG,[Use as the path to clang [default=autodetect]])
 AC_CHECK_TARGET_TOOL([CLANG], [clang])
 ClangCmd="$CLANG"
 AC_SUBST([ClangCmd])
 
 dnl ** Which LLVM llc to use?
 dnl --------------------------------------------------------------
+AC_ARG_VAR(LLC,[Use as the path to LLVM's llc [default=autodetect]])
 FIND_LLVM_PROG([LLC], [llc], [$LlvmVersion])
 LlcCmd="$LLC"
 AC_SUBST([LlcCmd])
 
 dnl ** Which LLVM opt to use?
 dnl --------------------------------------------------------------
+AC_ARG_VAR(OPT,[Use as the path to LLVM's opt [default=autodetect]])
 FIND_LLVM_PROG([OPT], [opt], [$LlvmVersion])
 OptCmd="$OPT"
 AC_SUBST([OptCmd])
@@ -673,61 +716,23 @@ dnl --------------------------------------------------------------
 dnl ** Copy the files from the "fs" utility into the right folders.
 dnl --------------------------------------------------------------
 AC_MSG_NOTICE([Creating links for in-tree file handling routines.])
-ln -f -v utils/fs/fs.* utils/lndir/
-ln -f -v utils/fs/fs.* utils/unlit/
-ln -f -v utils/fs/fs.* rts/
-ln -f -v utils/fs/fs.h libraries/base/include/
-ln -f -v utils/fs/fs.c libraries/base/cbits/
+ln -f utils/fs/fs.* utils/lndir/
+ln -f utils/fs/fs.* utils/unlit/
+ln -f utils/fs/fs.* rts/
+ln -f utils/fs/fs.h libraries/base/include/
+ln -f utils/fs/fs.c libraries/base/cbits/
 AC_MSG_NOTICE([Routines in place. Packages can now be build normally.])
 
 dnl --------------------------------------------------------------
 dnl ** Can the unix package be built?
 dnl --------------------------------------------------------------
 
-if test "$TargetOS" = "mingw32"
-then
-    GhcLibsWithUnix=NO
-else
-    GhcLibsWithUnix=YES
-fi
-AC_SUBST([GhcLibsWithUnix])
-
 dnl ** does #! work?
 AC_SYS_INTERPRETER()
 
-# Check for split-objs
-SplitObjsBroken=NO
-dnl ** look for `perl'
-case $HostOS_CPP in
-cygwin32|mingw32)
-  if test "$EnableDistroToolchain" = "NO"; then
-    PerlCmd=$hardtop/inplace/perl/perl
-  else
-    AC_PATH_PROG([PerlCmd],[perl])
-  fi
-  # because of Trac #15051 SplitObjs is useless on Windows.  It regresses
-  # build times to days for a build, and this effect is also there for end users
-  # of GHC.  So unfortunately we have to disable it, even without having
-  # split-sections.  Though the compile time hit for split-sections should be
-  # tiny compared to this so maybe we should enable it for x86_64.
-  SplitObjsBroken=YES
-  ;;
-*)
-    AC_PATH_PROG([PerlCmd],[perl])
-    if test -z "$PerlCmd"
-    then
-        AC_MSG_WARN([No Perl on PATH, disabling split object support])
-        SplitObjsBroken=YES
-    else
-        FPTOOLS_CHECK_PERL_VERSION
-    fi
-    ;;
-esac
-AC_SUBST([SplitObjsBroken])
-
 dnl ** look for GCC and find out which version
 dnl     Figure out which C compiler to use.  Gcc is preferred.
-dnl     If gcc, make sure it's at least 3.0
+dnl     If gcc, make sure it's at least 4.6
 dnl
 FP_GCC_VERSION
 
@@ -737,7 +742,9 @@ FP_GCC_SUPPORTS_NO_PIE
 dnl ** Used to determine how to compile ghc-prim's atomics.c, used by
 dnl    unregisterised, Sparc, and PPC backends.
 FP_GCC_SUPPORTS__ATOMICS
-AC_DEFINE([HAVE_C11_ATOMICS], [$CONF_GCC_SUPPORTS__ATOMICS], [Does GCC support __atomic primitives?])
+if test $CONF_GCC_SUPPORTS__ATOMICS = YES ; then
+  AC_DEFINE([HAVE_C11_ATOMICS], [1], [Does GCC support __atomic primitives?])
+fi
 
 FP_GCC_EXTRA_FLAGS
 
@@ -816,6 +823,9 @@ dnl ** check for patch
 dnl if GNU patch is named gpatch, look for it first
 AC_PATH_PROGS(PatchCmd,gpatch patch, patch)
 
+dnl ** check for autoreconf
+AC_PATH_PROG(AutoreconfCmd, autoreconf, autoreconf)
+
 dnl ** check for dtrace (currently only implemented for Mac OS X)
 AC_ARG_ENABLE(dtrace,
     [AC_HELP_STRING([--enable-dtrace],
@@ -853,23 +863,39 @@ AC_PATH_PROG(SPHINXBUILD,sphinx-build)
 AC_CACHE_CHECK([for version of sphinx-build], fp_cv_sphinx_version,
 changequote(, )dnl
 [if test -n "$SPHINXBUILD"; then
-  fp_cv_sphinx_version=`"$SPHINXBUILD" --version 2>&1 | sed 's/.* v\?\([0-9]\.[0-9]\.[0-9]\)/\1/' | head -n1`;
+  fp_cv_sphinx_version=`"$SPHINXBUILD" --version 2>&1 | sed 's/.* \([0-9]\.[0-9]\.[0-9]\)/\1/' | head -n1`;
 fi;
 changequote([, ])dnl
 ])
 FP_COMPARE_VERSIONS([$fp_cv_sphinx_version],-lt,1.0.0,
     [AC_MSG_WARN([Sphinx version 1.0.0 or later is required to build documentation]); SPHINXBUILD=;])
+if test -n "$SPHINXBUILD"; then
+  if "$SPHINXBUILD" -b text utils/check-sphinx utils/check-sphinx/dist > /dev/null 2>&1; then true; else
+    AC_MSG_WARN([Sphinx for python3 is required to build documentation.])
+    SPHINXBUILD=;
+  fi
+fi
 
 dnl ** check for xelatex
 AC_PATH_PROG(XELATEX,xelatex)
+
+dnl ** check for makeinfo
+AC_PATH_PROG(MAKEINFO,makeinfo)
+
+dnl ** check for Python for testsuite driver
+FIND_PYTHON
 
 dnl ** check for ghc-pkg command
 FP_PROG_GHC_PKG
 
 dnl ** check for installed happy binary + version
+
+AC_ARG_VAR(HAPPY,[Use as the path to happy [default=autodetect]])
 FPTOOLS_HAPPY
 
 dnl ** check for installed alex binary + version
+
+AC_ARG_VAR(ALEX,[Use as the path to alex [default=autodetect]])
 FPTOOLS_ALEX
 
 dnl --------------------------------------------------
@@ -932,14 +958,18 @@ FP_CHECK_SIZEOF_AND_ALIGNMENT(int64_t)
 FP_CHECK_SIZEOF_AND_ALIGNMENT(uint64_t)
 
 
-dnl for use in settings.in
+dnl for use in settings file
 TargetWordSize=$ac_cv_sizeof_void_p
-if test "x$TargetWordSize" == 8; then
+if test "x$TargetWordSize" = x8; then
   AC_SUBST([Cabal64bit],[True])
 else
   AC_SUBST([Cabal64bit],[False])
 fi
 AC_SUBST(TargetWordSize)
+
+AC_C_BIGENDIAN([TargetWordBigEndian=YES],[TargetWordBigEndian=NO])
+AC_SUBST(TargetWordBigEndian)
+
 FP_CHECK_FUNC([WinExec],
   [@%:@include <windows.h>], [WinExec("",0)])
 
@@ -948,7 +978,7 @@ FP_CHECK_FUNC([GetModuleFileName],
 
 dnl ** check for more functions
 dnl ** The following have been verified to be used in ghc/, but might be used somewhere else, too.
-AC_CHECK_FUNCS([getclock getrusage gettimeofday setitimer siginterrupt sysconf times ctime_r sched_setaffinity setlocale])
+AC_CHECK_FUNCS([getclock getrusage gettimeofday setitimer siginterrupt sysconf times ctime_r sched_setaffinity sched_getaffinity setlocale])
 
 dnl ** On OS X 10.4 (at least), time.h doesn't declare ctime_r if
 dnl ** _POSIX_C_SOURCE is defined
@@ -972,7 +1002,7 @@ dnl ** check for math library
 dnl    Keep that check as early as possible.
 dnl    as we need to know whether we need libm
 dnl    for math functions or not
-dnl    (see http://ghc.haskell.org/trac/ghc/ticket/3730)
+dnl    (see https://gitlab.haskell.org/ghc/ghc/issues/3730)
 AC_CHECK_LIB(m, atan, HaveLibM=YES, HaveLibM=NO)
 if test $HaveLibM = YES
 then
@@ -998,7 +1028,6 @@ AC_ARG_WITH([system-libffi],
 AS_IF([test "x$with_system_libffi" = "xyes"],
   [UseSystemLibFFI="YES"], [UseSystemLibFFI="NO"]
 )
-
 
 AC_SUBST(UseSystemLibFFI)
 
@@ -1221,16 +1250,7 @@ case ${TargetOS} in
         RtsLinkerUseMmap=1
         ;;
     darwin|ios|watchos|tvos)
-        # Don't use mmap on powerpc/darwin as the mmap there doesn't support
-        # reallocating. Reallocating is needed to allocate jump islands just
-        # after each object image. Jumps to these jump islands use relative
-        # branches which are limited to offsets that can be represented in
-        # 24-bits.
-        if test "$TargetArch" != "powerpc" ; then
-            RtsLinkerUseMmap=1
-        else
-            RtsLinkerUseMmap=0
-        fi
+        RtsLinkerUseMmap=1
         ;;
     *)
         # Windows (which doesn't have mmap) and everything else.
@@ -1243,14 +1263,48 @@ AC_DEFINE_UNQUOTED([RTS_LINKER_USE_MMAP], [$RtsLinkerUseMmap],
 
 dnl ** Have libdw?
 dnl --------------------------------------------------------------
+AC_ARG_WITH([libdw-libraries],
+  [AC_HELP_STRING([--with-libdw-libraries=ARG],
+    [Find libraries for libdw in ARG [default=system default]])
+  ],
+  [
+    LibdwLibDir="$withval"
+    LIBDW_LDFLAGS="-L$withval"
+  ])
+
+AC_SUBST(LibdwLibDir)
+
+AC_ARG_WITH([libdw-includes],
+  [AC_HELP_STRING([--with-libdw-includes=ARG],
+    [Find includes for libdw in ARG [default=system default]])
+  ],
+  [
+    LibdwIncludeDir="$withval"
+    LIBDW_CFLAGS="-I$withval"
+  ])
+
+AC_SUBST(LibdwIncludeDir)
+
 UseLibdw=NO
 USE_LIBDW=0
 AC_ARG_ENABLE(dwarf-unwind,
     [AC_HELP_STRING([--enable-dwarf-unwind],
-        [Enable DWARF unwinding support in the runtime system via elfutils' libdw [default=no]])],
-    [AC_CHECK_LIB(dw, dwfl_attach_state, [UseLibdw=YES], [UseLibdw=NO])],
-    [UseLibdw=NO]
-)
+        [Enable DWARF unwinding support in the runtime system via elfutils' libdw [default=no]])])
+if test "$enable_dwarf_unwind" = "yes" ; then
+  CFLAGS2="$CFLAGS"
+  CFLAGS="$LIBDW_CFLAGS $CFLAGS"
+  LDFLAGS2="$LDFLAGS"
+  LDFLAGS="$LIBDW_LDFLAGS $LDFLAGS"
+
+  AC_CHECK_LIB(dw, dwfl_attach_state,
+      [AC_CHECK_HEADERS([elfutils/libdw.h], [break], [])
+       UseLibdw=YES],
+      [AC_MSG_ERROR([Cannot find system libdw (required by --enable-dwarf-unwind)])])
+
+  CFLAGS="$CFLAGS2"
+  LDFLAGS="$LDFLAGS2"
+fi
+
 AC_SUBST(UseLibdw)
 if test $UseLibdw = "YES" ; then
 	USE_LIBDW=1
@@ -1262,19 +1316,61 @@ AC_DEFINE_UNQUOTED([USE_LIBDW], [$USE_LIBDW], [Set to 1 to use libdw])
 
 dnl ** Have libnuma?
 dnl --------------------------------------------------------------
-HaveLibNuma=0
-AC_CHECK_HEADERS([numa.h numaif.h])
+AC_ARG_WITH([libnuma-libraries],
+  [AC_HELP_STRING([--with-libnuma-libraries=ARG],
+    [Find libraries for libnuma in ARG [default=system default]])
+  ],
+  [
+    LibNumaLibDir="$withval"
+    LIBNUMA_LDFLAGS="-L$withval"
+  ])
 
-if test "$ac_cv_header_numa_h$ac_cv_header_numaif_h" = "yesyes" ; then
+AC_SUBST(LibNumaLibDir)
+
+AC_ARG_WITH([libnuma-includes],
+  [AC_HELP_STRING([--with-libnuma-includes=ARG],
+    [Find includes for libnuma in ARG [default=system default]])
+  ],
+  [
+    LibNumaIncludeDir="$withval"
+    LIBNUMA_CFLAGS="-I$withval"
+  ])
+
+AC_SUBST(LibNumaIncludeDir)
+
+HaveLibNuma=0
+AC_ARG_ENABLE(numa,
+    [AC_HELP_STRING([--enable-numa],
+        [Enable NUMA memory policy and thread affinity support in the
+         runtime system via numactl's libnuma [default=auto]])])
+
+if test "$enable_numa" != "no" ; then
+  CFLAGS2="$CFLAGS"
+  CFLAGS="$LIBNUMA_CFLAGS $CFLAGS"
+  LDFLAGS2="$LDFLAGS"
+  LDFLAGS="$LIBNUMA_LDFLAGS $LDFLAGS"
+
+  AC_CHECK_HEADERS([numa.h numaif.h])
+
+  if test "$ac_cv_header_numa_h$ac_cv_header_numaif_h" = "yesyes" ; then
     AC_CHECK_LIB(numa, numa_available,HaveLibNuma=1)
+  fi
+  if test "$enable_numa:$HaveLibNuma" = "yes:0" ; then
+      AC_MSG_ERROR([Cannot find system libnuma (required by --enable-numa)])]
+  fi
+
+  CFLAGS="$CFLAGS2"
+  LDFLAGS="$LDFLAGS2"
 fi
+
 AC_DEFINE_UNQUOTED([HAVE_LIBNUMA], [$HaveLibNuma], [Define to 1 if you have libnuma])
 if test $HaveLibNuma = "1" ; then
+  AC_SUBST([UseLibNuma],[YES])
   AC_SUBST([CabalHaveLibNuma],[True])
 else
+  AC_SUBST([UseLibNuma],[NO])
   AC_SUBST([CabalHaveLibNuma],[False])
 fi
-
 
 dnl ** Documentation
 dnl --------------------------------------------------------------
@@ -1286,17 +1382,30 @@ if test -n "$SPHINXBUILD"; then
     else
         BUILD_SPHINX_PDF=NO
     fi
+    if test -n "$MAKEINFO"; then
+        BUILD_SPHINX_INFO=YES
+    else
+        BUILD_SPHINX_INFO=NO
+    fi
 else
     BUILD_MAN=NO
     BUILD_SPHINX_HTML=NO
     BUILD_SPHINX_PDF=NO
+    BUILD_SPHINX_INFO=NO
 fi
 AC_SUBST(BUILD_MAN)
 AC_SUBST(BUILD_SPHINX_HTML)
 AC_SUBST(BUILD_SPHINX_PDF)
 
+dnl ** Determine library versions
+dnl The packages below should include all packages needed by
+dnl doc/users_guide/ghc_config.py.in.
 LIBRARY_VERSION(base)
-LIBRARY_VERSION(Cabal, Cabal/Cabal)
+LIBRARY_VERSION(Cabal, Cabal/Cabal/Cabal.cabal)
+dnl template-haskell.cabal is generated later
+dnl but the .in file already has the version
+LIBRARY_VERSION(template-haskell, template-haskell/template-haskell.cabal.in)
+LIBRARY_VERSION(array)
 LIBRARY_VERSION(ghc-prim)
 LIBRARY_VERSION(ghc-compact)
 LIBRARY_ghc_VERSION="$ProjectVersion"
@@ -1334,7 +1443,7 @@ checkMake380() {
 checkMake380 make
 checkMake380 gmake
 
-AC_CONFIG_FILES([mk/config.mk mk/install.mk mk/project.mk rts/rts.cabal compiler/ghc.cabal ghc/ghc-bin.cabal utils/runghc/runghc.cabal utils/gen-dll/gen-dll.cabal libraries/ghc-boot/ghc-boot.cabal libraries/ghc-boot-th/ghc-boot-th.cabal libraries/ghci/ghci.cabal libraries/ghc-heap/ghc-heap.cabal settings docs/users_guide/ghc_config.py docs/index.html libraries/prologue.txt distrib/configure.ac])
+AC_CONFIG_FILES([mk/config.mk mk/install.mk mk/project.mk rts/rts.cabal compiler/ghc.cabal ghc/ghc-bin.cabal utils/iserv/iserv.cabal utils/iserv-proxy/iserv-proxy.cabal utils/remote-iserv/remote-iserv.cabal utils/runghc/runghc.cabal utils/gen-dll/gen-dll.cabal libraries/ghc-boot/ghc-boot.cabal libraries/ghc-boot-th/ghc-boot-th.cabal libraries/ghci/ghci.cabal libraries/ghc-heap/ghc-heap.cabal libraries/libiserv/libiserv.cabal libraries/template-haskell/template-haskell.cabal docs/users_guide/ghc_config.py docs/index.html libraries/prologue.txt distrib/configure.ac])
 AC_OUTPUT
 [
 if test "$print_make_warning" = "true"; then
@@ -1359,14 +1468,11 @@ Configure completed successfully.
 echo "\
    Bootstrapping using   : $WithGhc
       which is version   : $GhcVersion
+      with threaded RTS? : $GhcThreadedRts
 "
 
-if test "x$CC_LLVM_BACKEND" = "x1"; then
-    if test "x$CC_CLANG_BACKEND" = "x1"; then
-        CompilerName="clang        "
-    else
-        CompilerName="llvm-gcc     "
-    fi
+if test "x$CcLlvmBackend" = "xYES"; then
+    CompilerName="clang        "
 else
     CompilerName="gcc          "
 fi
@@ -1375,8 +1481,11 @@ echo "\
    Using (for bootstrapping) : $CC_STAGE0
    Using $CompilerName       : $CC
       which is version       : $GccVersion
+      linker options         : $GccUseLdOpt
    Building a cross compiler : $CrossCompiling
    Unregisterised            : $Unregisterised
+   TablesNextToCode          : $TablesNextToCode
+   Build GMP in tree         : $GMP_FORCE_INTREE
    hs-cpp       : $HaskellCPPCmd
    hs-cpp-flags : $HaskellCPPArgs
    ar           : $ArCmd
@@ -1390,9 +1499,9 @@ echo "\
    genlib       : $GenlibCmd
    Happy        : $HappyCmd ($HappyVersion)
    Alex         : $AlexCmd ($AlexVersion)
-   Perl         : $PerlCmd
    sphinx-build : $SPHINXBUILD
    xelatex      : $XELATEX
+   makeinfo     : $MAKEINFO
 
    Using LLVM tools
       clang : $ClangCmd
@@ -1411,7 +1520,8 @@ fi
 
 echo "\
    Tools to build Sphinx HTML documentation available: $BUILD_SPHINX_HTML
-   Tools to build Sphinx PDF documentation available: $BUILD_SPHINX_PDF"
+   Tools to build Sphinx PDF documentation available: $BUILD_SPHINX_PDF
+   Tools to build Sphinx INFO documentation available: $BUILD_SPHINX_INFO"
 
 echo "----------------------------------------------------------------------
 "
@@ -1423,5 +1533,5 @@ To make changes to the default build configuration, copy the file
 mk/build.mk.sample to mk/build.mk, and edit the settings in there.
 
 For more information on how to configure your GHC build, see
-   http://ghc.haskell.org/trac/ghc/wiki/Building
+   https://gitlab.haskell.org/ghc/ghc/wikis/building
 "]

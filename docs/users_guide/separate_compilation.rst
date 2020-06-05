@@ -260,6 +260,9 @@ Redirecting the compilation output(s)
     example, they would still be put in ``parse/Foo.hi``,
     ``parse/Bar.hi``, and ``gurgle/Bumble.hi``.
 
+    Please also note that when doing incremental compilation, this directory is
+    where GHC looks into to find object files from previous builds.
+
 .. ghc-flag:: -ohi ⟨file⟩
     :shortdesc: set the filename in which to put the interface
     :type: dynamic
@@ -287,6 +290,22 @@ Redirecting the compilation output(s)
 
     Redirects all generated interface files into ⟨dir⟩, instead of the
     default.
+
+    Please also note that when doing incremental compilation (by ``ghc --make``
+    or ``ghc -c``), this directory is where GHC looks into to find interface
+    files.
+
+.. ghc-flag:: -hiedir ⟨dir⟩
+    :shortdesc: set directory for extended interface files
+    :type: dynamic
+    :category:
+
+    Redirects all generated extended interface files into ⟨dir⟩, instead of
+    the default.
+
+    Please also note that when doing incremental compilation (by ``ghc --make``
+    or ``ghc -c``), this directory is where GHC looks into to find extended
+    interface files.
 
 .. ghc-flag:: -stubdir ⟨dir⟩
     :shortdesc: redirect FFI stub files
@@ -351,6 +370,12 @@ Redirecting the compilation output(s)
 
     to get the profiled version.
 
+.. ghc-flag:: -hiesuf ⟨suffix⟩
+    :shortdesc: set the suffix to use for extended interface files
+    :type: dynamic
+
+    The ``-hiesuf`` ⟨suffix⟩ will change the ``.hie`` file suffix for
+    extended interface files to whatever you specify.
 
 .. ghc-flag:: -hcsuf ⟨suffix⟩
     :shortdesc: set the suffix to use for intermediate C files
@@ -534,6 +559,51 @@ Other options related to interface files
     where ⟨file⟩ is the name of an interface file, dumps the contents of
     that interface in a human-readable format. See :ref:`modes`.
 
+.. _hie-options:
+
+Options related to extended interface files
+-------------------------------------------
+
+.. index::
+   single: extended interface files, options
+
+GHC builds up a wealth of information about a Haskell source file as it compiles
+it. Extended interface files are a way of persisting some of this information to
+disk so that external tools, such as IDE's, can avoid parsing, typechecking, and
+renaming all over again. These files contain
+
+  * a simplified AST
+
+       * nodes are annotated with source positions and types
+       * identifiers are annotated with scope information
+
+  * the raw bytes of the initial Haskell source
+
+The GHC API exposes functions for reading and writing these files.
+
+.. ghc-flag:: -fwrite-ide-info
+    :shortdesc: Write out extended interface files
+    :type: dynamic
+    :category: extended-interface-files
+
+    Writes out extended interface files alongside regular interface files.
+    Just like regular interface files, GHC has a recompilation check to detect
+    out of date or missing extended interface files.
+
+.. ghc-flag:: -fvalidate-ide-info
+    :shortdesc: Perform some sanity checks on the extended interface files
+    :type: dynamic
+    :category: extended-interface-files
+
+    Runs a series of sanity checks and lints on the extended interface files
+    that are being written out. These include testing things properties such as
+    variables not occurring outside of their expected scopes.
+
+The format in which GHC currently stores its typechecked AST, makes it costly
+to collect the types for some expressions nodes. For the sake of performance,
+GHC currently chooses to skip over these, so not all expression nodes should be
+expected to have type information on them. See :ghc-ticket:`16233` for more.
+
 .. _recomp:
 
 The recompilation checker
@@ -598,9 +668,7 @@ this time with the fingerprints on the things it needed last time
 are all the same it stops compiling early in the process saying
 “Compilation IS NOT required”. What a beautiful sight!
 
-You can read about `how all this
-works <http://ghc.haskell.org/trac/ghc/wiki/Commentary/Compiler/RecompilationAvoidance>`__
-in the GHC commentary.
+You can read about :ghc-wiki:`how all this works <commentary/compiler/recompilation-avoidance>` in the GHC commentary.
 
 .. _mutual-recursion:
 
@@ -1357,6 +1425,20 @@ generation are:
     imported by the home package module. This option is normally only
     used by the various system libraries.
 
+.. ghc-flag:: -include-cpp-deps
+    :shortdesc: Include preprocessor dependencies
+    :type: dynamic
+    :category:
+
+    Output preprocessor dependencies. This only has an effect when the CPP
+    language extension is enabled. These dependencies are files included with
+    the ``#include`` preprocessor directive (as well as transitive includes) and
+    implicitly included files such as standard c preprocessor headers and a GHC
+    version header. One exception to this is that GHC generates a temporary
+    header file (during compilation) containing package version macros. As this
+    is only a temporary file that GHC will always generate, it is not output as
+    a dependency.
+
 .. _orphan-modules:
 
 Orphan modules and instance declarations
@@ -1418,7 +1500,6 @@ module:
    instance* or at least one *orphan rule*.
 
 -  An instance declaration in a module ``M`` is an *orphan instance* if
-   orphan instance
 
    -  The class of the instance declaration is not declared in ``M``, and
 

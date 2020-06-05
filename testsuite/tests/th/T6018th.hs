@@ -14,25 +14,23 @@ import Language.Haskell.TH
 $( return
    [ OpenTypeFamilyD (TypeFamilyHead
        (mkName "F")
-       [ PlainTV (mkName "a"), PlainTV (mkName "b"), PlainTV (mkName "c") ]
-       (TyVarSig (KindedTV (mkName "result") (VarT (mkName "k"))))
+       [ PlainTV (mkName "a") (), PlainTV (mkName "b") (), PlainTV (mkName "c") () ]
+       (TyVarSig (KindedTV (mkName "result") () (VarT (mkName "k"))))
        (Just $ InjectivityAnn (mkName "result")
                              [(mkName "a"), (mkName "b"), (mkName "c") ]))
    , TySynInstD
-       (mkName "F")
-       (TySynEqn [ ConT (mkName "Int"), ConT (mkName "Char")
-                 , ConT (mkName "Bool")]
-                 ( ConT (mkName "Bool")))
+       (TySynEqn Nothing (AppT (AppT (AppT (ConT (mkName "F")) (ConT (mkName "Int")))
+                       (ConT (mkName "Char"))) (ConT (mkName "Bool")))
+                 (ConT (mkName "Bool")))
+
    , TySynInstD
-       (mkName "F")
-       (TySynEqn [ ConT (mkName "Char"), ConT (mkName "Bool")
-                 , ConT (mkName "Int")]
-                 ( ConT (mkName "Int")))
+       (TySynEqn Nothing (AppT (AppT (AppT (ConT (mkName "F")) (ConT (mkName "Char")))
+                       (ConT (mkName "Bool"))) (ConT (mkName "Int")))
+                 (ConT (mkName "Int")))
    , TySynInstD
-       (mkName "F")
-       (TySynEqn [ ConT (mkName "Bool"), ConT (mkName "Int")
-                 , ConT (mkName "Char")]
-                 ( ConT (mkName "Char")))
+       (TySynEqn Nothing (AppT (AppT (AppT (ConT (mkName "F")) (ConT (mkName "Bool")))
+                       (ConT (mkName "Int"))) (ConT (mkName "Char")))
+                 (ConT (mkName "Char")))
    ] )
 
 -- this is injective - a type variables mentioned on LHS is not mentioned on RHS
@@ -43,13 +41,13 @@ $( return
 $( return
    [ OpenTypeFamilyD (TypeFamilyHead
        (mkName "J")
-       [ PlainTV (mkName "a"), KindedTV (mkName "b") (VarT (mkName "k")) ]
-       (TyVarSig (PlainTV (mkName "r")))
+       [ PlainTV (mkName "a") (), KindedTV (mkName "b") () (VarT (mkName "k")) ]
+       (TyVarSig (PlainTV (mkName "r") ()))
        (Just $ InjectivityAnn (mkName "r") [mkName "a"]))
    , TySynInstD
-       (mkName "J")
-       (TySynEqn [ ConT (mkName "Int"), VarT (mkName "b") ]
-                 ( ConT (mkName "Int")))
+       (TySynEqn Nothing (AppT (AppT (ConT (mkName "J")) (ConT (mkName "Int")))
+                       (VarT (mkName "b")))
+                 (ConT (mkName "Char")))
    ] )
 
 -- Closed type families
@@ -62,19 +60,22 @@ $( return
 $( return
    [ ClosedTypeFamilyD (TypeFamilyHead
        (mkName "I")
-       [ KindedTV (mkName "a") StarT, KindedTV (mkName "b") StarT
-       , KindedTV (mkName "c") StarT ]
-       (TyVarSig (PlainTV (mkName "r")))
+       [ KindedTV (mkName "a") () StarT, KindedTV (mkName "b") () StarT
+       , KindedTV (mkName "c") () StarT ]
+       (TyVarSig (PlainTV (mkName "r") ()))
        (Just $ InjectivityAnn (mkName "r") [(mkName "a"), (mkName "b")]))
-       [ TySynEqn [ ConT (mkName "Int"), ConT (mkName "Char")
-                  , ConT (mkName "Bool")]
-                  ( ConT (mkName "Bool"))
-       , TySynEqn [ ConT (mkName "Int"), ConT (mkName "Char")
-                  , ConT (mkName "Int")]
-                  ( ConT (mkName "Bool"))
-       , TySynEqn [ ConT (mkName "Bool"), ConT (mkName "Int")
-                  , ConT (mkName "Int")]
-                  ( ConT (mkName "Int"))
+
+       [ TySynEqn Nothing (AppT (AppT (AppT (ConT (mkName "I")) (ConT (mkName "Int")))
+                                      (ConT (mkName "Char"))) (ConT (mkName "Bool")))
+                          (ConT (mkName "Bool"))
+
+       , TySynEqn Nothing (AppT (AppT (AppT (ConT (mkName "I")) (ConT (mkName "Int")))
+                                      (ConT (mkName "Char"))) (ConT (mkName "Int")))
+                          (ConT (mkName "Bool"))
+
+       , TySynEqn Nothing (AppT (AppT (AppT (ConT (mkName "I")) (ConT (mkName "Bool")))
+                                      (ConT (mkName "Int"))) (ConT (mkName "Int")))
+                          (ConT (mkName "Int"))
        ]
    ] )
 
@@ -97,23 +98,23 @@ $( do { decl@([ClosedTypeFamilyD (TypeFamilyHead _ _ _ (Just inj)) _]) <-
 $( return
    [ OpenTypeFamilyD (TypeFamilyHead
        (mkName "H")
-       [ PlainTV (mkName "a"), PlainTV (mkName "b"), PlainTV (mkName "c") ]
-       (TyVarSig (PlainTV (mkName "r")))
+       [ PlainTV (mkName "a") (), PlainTV (mkName "b") (), PlainTV (mkName "c") () ]
+       (TyVarSig (PlainTV (mkName "r") ()))
        (Just $ InjectivityAnn (mkName "r")
                              [(mkName "a"), (mkName "b") ]))
+
    , TySynInstD
-       (mkName "H")
-       (TySynEqn [ ConT (mkName "Int"), ConT (mkName "Char")
-                 , ConT (mkName "Bool")]
-                 ( ConT (mkName "Bool")))
+         (TySynEqn Nothing (AppT (AppT (AppT (ConT (mkName "H")) (ConT (mkName "Int")))
+                                       (ConT (mkName "Char"))) (ConT (mkName "Bool")))
+                           (ConT (mkName "Bool")))
+
    , TySynInstD
-       (mkName "H")
-       (TySynEqn [ ConT (mkName "Int"), ConT (mkName "Int")
-                 , ConT (mkName "Int")]
-                 ( ConT (mkName "Bool")))
+         (TySynEqn Nothing (AppT (AppT (AppT (ConT (mkName "H")) (ConT (mkName "Int")))
+                                       (ConT (mkName "Int"))) (ConT (mkName "Int")))
+                           (ConT (mkName "Bool")))
+
    , TySynInstD
-       (mkName "H")
-       (TySynEqn [ ConT (mkName "Bool"), ConT (mkName "Int")
-                 , ConT (mkName "Int")]
-                 ( ConT (mkName "Int")))
+         (TySynEqn Nothing (AppT (AppT (AppT (ConT (mkName "H")) (ConT (mkName "Bool")))
+                                       (ConT (mkName "Int"))) (ConT (mkName "Int")))
+                           (ConT (mkName "Int")))
    ] )

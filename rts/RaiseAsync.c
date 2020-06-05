@@ -93,7 +93,7 @@ suspendComputation (Capability *cap, StgTSO *tso, StgUpdateFrame *stop_here)
    throwTo().
 
    Note [Throw to self when masked]
-   
+
    When a StackOverflow occurs when the thread is masked, we want to
    defer the exception to when the thread becomes unmasked/hits an
    interruptible point.  We already have a mechanism for doing this,
@@ -103,26 +103,26 @@ suspendComputation (Capability *cap, StgTSO *tso, StgUpdateFrame *stop_here)
    multithreaded nonsense). Morally, a stack overflow should be an
    asynchronous exception sent by a thread to itself, and it should
    have the same semantics.  But there are a few key differences:
-   
+
    - If you actually tried to send an asynchronous exception to
      yourself using throwTo, the exception would actually immediately
      be delivered.  This is because throwTo itself is considered an
      interruptible point, so the exception is always deliverable. Thus,
      ordinarily, we never end up with a message to oneself in the
      blocked_exceptions queue.
-   
+
    - In the case of a StackOverflow, we don't actually care about the
      wakeup semantics; when an exception is delivered, the thread that
      originally threw the exception should be woken up, since throwTo
      blocks until the exception is successfully thrown.  Fortunately,
      it is harmless to wakeup a thread that doesn't actually need waking
      up, e.g. ourselves.
-   
+
    - No synchronization is necessary, because we own the TSO and the
      capability.  You can observe this by tracing through the execution
      of throwTo.  We skip synchronizing the message and inter-capability
      communication.
-   
+
    We think this doesn't break any invariants, but do be careful!
    -------------------------------------------------------------------------- */
 
@@ -187,7 +187,7 @@ throwToSelf (Capability *cap, StgTSO *tso, StgClosure *exception)
    MessageThrowTo *   exception was not raised; the source TSO
                       should now put itself in the state
                       BlockedOnMsgThrowTo, and when it is ready
-                      it should unlock the mssage using
+                      it should unlock the message using
                       unlockClosure(msg, &stg_MSG_THROWTO_info);
                       If it decides not to raise the exception after
                       all, it can revoke it safely with
@@ -449,8 +449,8 @@ check_target:
         }
         // fall to next
     }
+    FALLTHROUGH;
 #endif
-    /* fallthrough */
     case BlockedOnCCall:
         blockedThrowTo(cap,target,msg);
         return THROWTO_BLOCKED;
@@ -515,9 +515,9 @@ blockedThrowTo (Capability *cap, StgTSO *target, MessageThrowTo *msg)
 
     ASSERT(target->cap == cap);
 
+    dirty_TSO(cap,target); // we will modify the blocked_exceptions queue
     msg->link = target->blocked_exceptions;
     target->blocked_exceptions = msg;
-    dirty_TSO(cap,target); // we modified the blocked_exceptions queue
 }
 
 /* -----------------------------------------------------------------------------
@@ -870,6 +870,7 @@ raiseAsync(Capability *cap, StgTSO *tso, StgClosure *exception,
                 ap->payload[i] = (StgClosure *)*sp++;
             }
 
+            write_barrier(); // XXX: Necessary?
             SET_HDR(ap,&stg_AP_STACK_info,
                     ((StgClosure *)frame)->header.prof.ccs /* ToDo */);
             TICK_ALLOC_UP_THK(WDS(words+1),0);
@@ -921,8 +922,7 @@ raiseAsync(Capability *cap, StgTSO *tso, StgClosure *exception,
                 ap->payload[i] = (StgClosure *)*sp++;
             }
 
-            SET_HDR(ap,&stg_AP_STACK_NOUPD_info,
-                    ((StgClosure *)frame)->header.prof.ccs /* ToDo */);
+            SET_HDR(ap,&stg_AP_STACK_NOUPD_info,stack->header.prof.ccs);
             TICK_ALLOC_SE_THK(WDS(words+1),0);
 
             stack->sp = sp;

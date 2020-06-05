@@ -1,7 +1,7 @@
 {-# LANGUAGE Trustworthy #-}
 {-# LANGUAGE NoImplicitPrelude, MagicHash, ImplicitParams #-}
 {-# LANGUAGE RankNTypes, PolyKinds, DataKinds #-}
-{-# OPTIONS_HADDOCK hide #-}
+{-# OPTIONS_HADDOCK not-home #-}
 
 -----------------------------------------------------------------------------
 -- |
@@ -23,7 +23,6 @@
 -----------------------------------------------------------------------------
 
 module GHC.Err( absentErr, error, errorWithoutStackTrace, undefined ) where
-import GHC.CString ()
 import GHC.Types (Char, RuntimeRep)
 import GHC.Stack.Types
 import GHC.Prim

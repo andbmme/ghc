@@ -86,6 +86,7 @@ test('T3303', [], multimod_compile, ['T3303', '-v0'])
 test('T3741', normal, compile, [''])
 test('DoAndIfThenElse', normal, compile, [''])
 test('BlockArguments', normal, compile, [''])
+test('BlockArgumentsArrowCmds', normal, compile, [''])
 test('BlockArgumentsLambdaCase', normal, compile, [''])
 test('NoBlockArguments', normal, compile, [''])
 test('NondecreasingIndentation', normal, compile, [''])
@@ -93,6 +94,7 @@ test('mc15', normal, compile, [''])
 test('mc16', normal, compile, [''])
 test('EmptyDecls', normal, compile, [''])
 test('ParserLambdaCase', [], compile, [''])
+test('ParserArrowLambdaCase', [], compile, [''])
 
 test('ColumnPragma', normal, compile, [''])
 test('T5243', [], multimod_compile, ['T5243', ''])
@@ -113,10 +115,14 @@ test('T11622', normal, compile, [''])
 test('DumpParsedAst',      normal, compile, ['-dsuppress-uniques -ddump-parsed-ast'])
 test('DumpRenamedAst',     normal, compile, ['-dsuppress-uniques -ddump-rn-ast'])
 test('DumpTypecheckedAst', normal, compile, ['-dsuppress-uniques -ddump-tc-ast'])
+test('T12045e', normal, compile, [''])
+test('T13087', normal, compile, [''])
 test('T13747', normal, compile, [''])
 test('T14189',     normal, compile, ['-dsuppress-uniques -ddump-rn-ast'])
 test('T13986', normal, compile, [''])
 test('T10855', normal, compile, [''])
+test('T13600a', normal, compile, [''])
+test('T13600b', normal, compile, ['-Wno-missing-signatures -Wno-unused-matches'])
 test('T15139', normal, compile, ['-Wincomplete-patterns -fdiagnostics-show-caret'])
 test('T15323', normal, compile, ['-dsuppress-uniques -ddump-parsed-ast'])
 test('KindSigs', normal, compile, ['-dsuppress-uniques -ddump-parsed-ast'])
@@ -136,3 +142,28 @@ def only_MG_loc(x):
 test('T15279', normalise_errmsg_fun(only_MG_loc), compile, [''])
 test('T15457', normal, compile, [''])
 test('T15675', normal, compile, [''])
+test('T15781', normal, compile, [''])
+test('T16339', normal, compile, [''])
+test('T16619', req_th, multimod_compile, ['T16619', '-v0'])
+test('T504', normal, compile, [''])
+test('T515', literate, compile, ['-Wall'])
+test('T1087', normal, compile, [''])
+test('proposal-229a', normal, compile, [''])
+test('proposal-229b', normal, compile, [''])
+test('proposal-229d', normal, compile, [''])
+test('proposal-229e', normal, compile, [''])
+
+# We omit 'profasm' because it fails with:
+# Cannot load -prof objects when GHC is built with -dynamic
+#     To fix this, either:
+#       (1) Use -fexternal-interpreter, or
+#       (2) Build the program twice: once with -dynamic, and then
+#           with -prof using -osuf to set a different object file suffix.
+test('proposal-229f',
+     [ extra_files(['proposal-229f.hs', 'Proposal229f_instances.hs']),
+       omit_ways(['profasm', 'profthreaded'])
+     ],
+     multimod_compile_and_run, ['proposal-229f.hs', ''])
+
+test('T15730a', normal, compile_and_run, [''])
+test('T18130', normal, compile, [''])

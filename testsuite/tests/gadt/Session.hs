@@ -1,8 +1,10 @@
 {-# LANGUAGE GADTs, KindSignatures #-}
 
--- See Trac #1323; crashed GHC 6.6
+-- See #1323; crashed GHC 6.6
 
 module Main where
+
+import Data.Kind (Type)
 
 data Zero = Zero
             deriving (Show)
@@ -16,7 +18,7 @@ class TyNum a where
 instance TyNum Zero where
 instance (TyNum p) => TyNum (Succ p) where
 
-data List :: * -> * -> * where
+data List :: Type -> Type -> Type where
              Nil :: List a Zero
              Cons :: (TyNum p) => a -> List a p -> List a (Succ p)
 

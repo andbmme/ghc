@@ -18,9 +18,9 @@ hidden-modules:
 import-dirs:
 
 #if defined(INSTALLING)
-library-dirs:           LIB_DIR"/rts" FFI_LIB_DIR
+library-dirs:           LIB_DIR"/rts" FFI_LIB_DIR LIBDW_LIB_DIR
 #else /* !INSTALLING */
-library-dirs:           TOP"/rts/dist/build" FFI_LIB_DIR
+library-dirs:           TOP"/rts/dist/build" FFI_LIB_DIR LIBDW_LIB_DIR
 #endif
 
 hs-libraries:   "HSrts" FFI_LIB
@@ -55,7 +55,7 @@ extra-libraries:
                               ,"bfd", "iberty"  /* for debugging */
 #endif
 #if defined(HAVE_LIBMINGWEX)
-# ifndef INSTALLING                             /* Bundled Mingw is behind */
+# if !defined(INSTALLING)                             /* Bundled Mingw is behind */
                               ,"mingwex"
 # endif
 #endif
@@ -67,11 +67,15 @@ extra-libraries:
 #if defined(INSTALLING)
 include-dirs:           INCLUDE_DIR FFI_INCLUDE_DIR
 #else /* !INSTALLING */
-include-dirs:           TOP"/rts/dist/build" TOP"/includes" TOP"/includes/dist-derivedconstants/header" FFI_INCLUDE_DIR
+include-dirs:           TOP"/rts/dist/build"
+                        TOP"/includes"
+                        TOP"/includes/dist-derivedconstants/header"
+                        FFI_INCLUDE_DIR
+                        LIBDW_INCLUDE_DIR
+                        TOP"/includes/dist-install/build"
 #endif
 
 includes:               Stg.h
-hugs-options:
 cc-options:
 
 ld-options:
@@ -93,10 +97,12 @@ ld-options:
          , "-Wl,-u,_base_GHCziIOziException_cannotCompactFunction_closure"
          , "-Wl,-u,_base_GHCziIOziException_cannotCompactPinned_closure"
          , "-Wl,-u,_base_GHCziIOziException_cannotCompactMutable_closure"
-         , "-Wl,-u,_base_ControlziExceptionziBase_absentSumFieldError_closure"
          , "-Wl,-u,_base_ControlziExceptionziBase_nonTermination_closure"
          , "-Wl,-u,_base_ControlziExceptionziBase_nestedAtomically_closure"
          , "-Wl,-u,_base_GHCziEventziThread_blockedOnBadFD_closure"
+         , "-Wl,-u,_base_GHCziExceptionziType_divZZeroException_closure"
+         , "-Wl,-u,_base_GHCziExceptionziType_underflowException_closure"
+         , "-Wl,-u,_base_GHCziExceptionziType_overflowException_closure"
          , "-Wl,-u,_base_GHCziConcziSync_runSparks_closure"
          , "-Wl,-u,_base_GHCziConcziIO_ensureIOManagerIsRunning_closure"
          , "-Wl,-u,_base_GHCziConcziIO_ioManagerCapabilitiesChanged_closure"
@@ -174,9 +180,11 @@ ld-options:
 #if WORD_SIZE_IN_BITS == 64
          , "-Wl,-u,_hs_atomicwrite64"
 #endif
+#if defined(DEBUG)
           /* This symbol is useful in gdb, but not referred to anywhere,
            * so we need to force it to be included in the binary. */
          , "-Wl,-u,_findPtr"
+#endif
 #else
            "-Wl,-u,base_GHCziTopHandler_runIO_closure"
          , "-Wl,-u,base_GHCziTopHandler_runNonIO_closure"
@@ -194,10 +202,12 @@ ld-options:
          , "-Wl,-u,base_GHCziIOziException_cannotCompactFunction_closure"
          , "-Wl,-u,base_GHCziIOziException_cannotCompactPinned_closure"
          , "-Wl,-u,base_GHCziIOziException_cannotCompactMutable_closure"
-         , "-Wl,-u,base_ControlziExceptionziBase_absentSumFieldError_closure"
          , "-Wl,-u,base_ControlziExceptionziBase_nonTermination_closure"
          , "-Wl,-u,base_ControlziExceptionziBase_nestedAtomically_closure"
          , "-Wl,-u,base_GHCziEventziThread_blockedOnBadFD_closure"
+         , "-Wl,-u,base_GHCziExceptionziType_divZZeroException_closure"
+         , "-Wl,-u,base_GHCziExceptionziType_underflowException_closure"
+         , "-Wl,-u,base_GHCziExceptionziType_overflowException_closure"
          , "-Wl,-u,base_GHCziConcziSync_runSparks_closure"
          , "-Wl,-u,base_GHCziConcziIO_ensureIOManagerIsRunning_closure"
          , "-Wl,-u,base_GHCziConcziIO_ioManagerCapabilitiesChanged_closure"
@@ -275,9 +285,11 @@ ld-options:
 #if WORD_SIZE_IN_BITS == 64
          , "-Wl,-u,hs_atomicwrite64"
 #endif
+#if defined(DEBUG)
           /* This symbol is useful in gdb, but not referred to anywhere,
            * so we need to force it to be included in the binary. */
          , "-Wl,-u,findPtr"
+#endif
 #endif
 
 /*  Pick up static libraries in preference over dynamic if in earlier search

@@ -29,6 +29,13 @@
 #include "PosixSource.h"
 #include "ghcconfig.h"
 
+// Enable DWARF Call-Frame Information (used for stack unwinding) on Linux.
+// This is not supported on Darwin and SmartOS due to assembler differences
+// (#15207).
+#if defined(linux_HOST_OS)
+#define ENABLE_UNWINDING
+#endif
+
 #if defined(sparc_HOST_ARCH) || defined(USE_MINIINTERPRETER)
 /* include Stg.h first because we want real machine regs in here: we
  * have to get the value of R1 back from Stg land to C land intact.
@@ -131,7 +138,7 @@ STG_NO_OPTIMIZE StgWord8 *win32AllocStack(void)
  * ABI requires this (x64, Mac OSX 32bit/64bit) as well as interfacing with
  * other libraries through the FFI.
  *
- * As part of this arrangment we must maintain the stack at a 16-byte boundary
+ * As part of this arrangement we must maintain the stack at a 16-byte boundary
  * - word_size-bytes (so 16n - 4 for i386 and 16n - 8 for x64) on entry to a
  * procedure since both GCC and LLVM expect this. This is because the stack
  * should have been 16-byte boundary aligned and then a call made which pushes
@@ -140,11 +147,11 @@ STG_NO_OPTIMIZE StgWord8 *win32AllocStack(void)
  * alignment for these jumps.
  *
  * This gives us binary compatibility with LLVM and GCC as well as dealing
- * with the FFI. Previously we just maintianed a 16n byte alignment for
+ * with the FFI. Previously we just maintained a 16n byte alignment for
  * procedure entry and calls, which led to bugs (see #4211 and #5250).
  *
  * To change this convention you need to change the code here, and in
- * compiler/nativeGen/X86/CodeGen.hs::GenCCall, and maybe the adjustor
+ * compiler/GHC/CmmToAsm/X86/CodeGen.hs::GenCCall, and maybe the adjustor
  * code for thunks in rts/AdjustorAsm.s, rts/Adjustor.c.
  *
  * A quick way to see if this is wrong is to compile this code:
@@ -388,7 +395,7 @@ StgRunIsImplementedInAssembler(void)
 #if defined(mingw32_HOST_OS)
         /*
          * Additional callee saved registers on Win64. This must match
-         * callClobberedRegisters in compiler/nativeGen/X86/Regs.hs as
+         * callClobberedRegisters in compiler/GHC/CmmToAsm/X86/Regs.hs as
          * both represent the Win64 calling convention.
          */
         "movq %%rdi,48(%%rax)\n\t"
@@ -405,9 +412,13 @@ StgRunIsImplementedInAssembler(void)
         "movq %%xmm15,136(%%rax)\n\t"
 #endif
 
+#if defined(ENABLE_UNWINDING)
         /*
          * Let the unwinder know where we saved the registers
          * See Note [Unwinding foreign exports on x86-64].
+         *
+         * N.B. We don't support unwinding on Darwin due to
+         * various toolchain insanity.
          */
         ".cfi_def_cfa rsp, 0\n\t"
         ".cfi_offset rbx, %c2\n\t"
@@ -440,6 +451,7 @@ StgRunIsImplementedInAssembler(void)
 #error "RSP_DELTA too big"
 #endif
           "\n\t"
+#endif /* defined(ENABLE_UNWINDING) */
 
         /*
          * Set BaseReg
@@ -489,15 +501,15 @@ StgRunIsImplementedInAssembler(void)
         "movq  48(%%rsp),%%rdi\n\t"
         "movq  56(%%rsp),%%rsi\n\t"
         "movq  64(%%rsp),%%xmm6\n\t"
-        "movq  72(%%rax),%%xmm7\n\t"
-        "movq  80(%%rax),%%xmm8\n\t"
-        "movq  88(%%rax),%%xmm9\n\t"
-        "movq  96(%%rax),%%xmm10\n\t"
-        "movq 104(%%rax),%%xmm11\n\t"
-        "movq 112(%%rax),%%xmm12\n\t"
-        "movq 120(%%rax),%%xmm13\n\t"
-        "movq 128(%%rax),%%xmm14\n\t"
-        "movq 136(%%rax),%%xmm15\n\t"
+        "movq  72(%%rsp),%%xmm7\n\t"
+        "movq  80(%%rsp),%%xmm8\n\t"
+        "movq  88(%%rsp),%%xmm9\n\t"
+        "movq  96(%%rsp),%%xmm10\n\t"
+        "movq 104(%%rsp),%%xmm11\n\t"
+        "movq 112(%%rsp),%%xmm12\n\t"
+        "movq 120(%%rsp),%%xmm13\n\t"
+        "movq 128(%%rsp),%%xmm14\n\t"
+        "movq 136(%%rsp),%%xmm15\n\t"
 #endif
         "addq %1, %%rsp\n\t"
         "retq"
@@ -512,8 +524,10 @@ StgRunIsImplementedInAssembler(void)
           "i"(RESERVED_C_STACK_BYTES + 32 /* r14 relative to cfa (rsp) */),
           "i"(RESERVED_C_STACK_BYTES + 40 /* r15 relative to cfa (rsp) */),
           "i"(RESERVED_C_STACK_BYTES + STG_RUN_STACK_FRAME_SIZE
-            /* rip relative to cfa */),
-          "i"((RSP_DELTA & 127) | (128 * ((RSP_DELTA >> 7) > 0)))
+              /* rip relative to cfa */)
+
+#if defined(ENABLE_UNWINDING)
+          , "i"((RSP_DELTA & 127) | (128 * ((RSP_DELTA >> 7) > 0)))
             /* signed LEB128-encoded delta from rsp - byte 1 */
 #if (RSP_DELTA >> 7) > 0
           , "i"(((RSP_DELTA >> 7) & 127) | (128 * ((RSP_DELTA >> 14) > 0)))
@@ -530,6 +544,9 @@ StgRunIsImplementedInAssembler(void)
             /* signed LEB128-encoded delta from rsp - byte 4 */
 #endif
 #undef RSP_DELTA
+
+#endif /* defined(ENABLE_UNWINDING) */
+
         );
         /*
          * See Note [Stack Alignment on X86]
@@ -622,55 +639,15 @@ StgRun(StgFunPtr f, StgRegTable *basereg) {
 
 #define STG_GLOBAL ".globl "
 
-#if defined(darwin_HOST_OS)
-#define STG_HIDDEN ".private_extern "
-#else
 #define STG_HIDDEN ".hidden "
-#endif
 
 #if defined(aix_HOST_OS)
 
 // implementation is in StgCRunAsm.S
 
-#elif defined(darwin_HOST_OS)
-void StgRunIsImplementedInAssembler(void)
-{
-#if HAVE_SUBSECTIONS_VIA_SYMBOLS
-            // if the toolchain supports deadstripping, we have to
-            // prevent it here (it tends to get confused here).
-        __asm__ volatile (".no_dead_strip _StgRunIsImplementedInAssembler\n");
-#endif
-        __asm__ volatile (
-                STG_GLOBAL STG_RUN "\n"
-                STG_HIDDEN STG_RUN "\n"
-                STG_RUN ":\n"
-                "\tmflr r0\n"
-                "\tbl saveFP # f14\n"
-                "\tstmw r13,-220(r1)\n"
-                "\tstwu r1,-%0(r1)\n"
-                "\tmr r27,r4\n" // BaseReg == r27
-                "\tmtctr r3\n"
-                "\tmr r12,r3\n"
-                "\tbctr\n"
-                ".globl _StgReturn\n"
-                "_StgReturn:\n"
-                "\tmr r3,r14\n"
-                "\tla r1,%0(r1)\n"
-                "\tlmw r13,-220(r1)\n"
-                "\tb restFP # f14\n"
-        : : "i"(RESERVED_C_STACK_BYTES+224 /*stack frame size*/));
-}
 #else
 
 // This version is for PowerPC Linux.
-
-// Differences from the Darwin/Mac OS X version:
-// *) Different Assembler Syntax
-// *) Doesn't use Register Saving Helper Functions (although they exist somewhere)
-// *) We may not access positive stack offsets
-//    (no "Red Zone" as in the Darwin ABI)
-// *) The Link Register is saved to a different offset in the caller's stack frame
-//    (Linux: 4(r1), Darwin 8(r1))
 
 static void GNUC3_ATTRIBUTE(used)
 StgRunIsImplementedInAssembler(void)
@@ -749,7 +726,6 @@ StgRunIsImplementedInAssembler(void)
 
 #if defined(powerpc64_HOST_ARCH)
 
-#if defined(linux_HOST_OS)
 static void GNUC3_ATTRIBUTE(used)
 StgRunIsImplementedInAssembler(void)
 {
@@ -870,10 +846,6 @@ StgRunIsImplementedInAssembler(void)
                 "\tblr\n"
         : : "i"(RESERVED_C_STACK_BYTES+304 /*stack frame size*/));
 }
-
-#else // linux_HOST_OS
-#error Only Linux support for power64 right now.
-#endif
 
 #endif
 

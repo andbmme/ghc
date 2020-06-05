@@ -1,6 +1,7 @@
 {-# LANGUAGE Trustworthy #-}
+{-# LANGUAGE InterruptibleFFI #-}
 {-# LANGUAGE CPP, NoImplicitPrelude, CApiFFI #-}
-{-# OPTIONS_HADDOCK hide #-}
+{-# OPTIONS_HADDOCK not-home #-}
 
 -----------------------------------------------------------------------------
 -- |
@@ -355,7 +356,8 @@ type CFilePath = CWString
 foreign import ccall unsafe "HsBase.h __hscore_open"
    c_open :: CFilePath -> CInt -> CMode -> IO CInt
 
-foreign import ccall safe "HsBase.h __hscore_open"
+-- e.g. use `interruptible` rather than `safe` due to #17912.
+foreign import ccall interruptible "HsBase.h __hscore_open"
    c_safe_open :: CFilePath -> CInt -> CMode -> IO CInt
 
 foreign import ccall unsafe "HsBase.h __hscore_fstat"
@@ -593,7 +595,7 @@ foreign import capi  unsafe "stdio.h value SEEK_END" sEEK_END :: CInt
 Note: Windows types
 
 Windows' _read and _write have types that differ from POSIX. They take an
-unsigned int for lengh and return a signed int where POSIX uses size_t and
+unsigned int for length and return a signed int where POSIX uses size_t and
 ssize_t. Those are different on x86_64 and equivalent on x86. We import them
 with the types in Microsoft's documentation which means that c_read,
 c_safe_read, c_write and c_safe_write have different Haskell types depending on

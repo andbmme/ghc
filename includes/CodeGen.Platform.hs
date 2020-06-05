@@ -1,12 +1,11 @@
 
-import CmmExpr
+import GHC.Cmm.Expr
 #if !(defined(MACHREGS_i386) || defined(MACHREGS_x86_64) \
     || defined(MACHREGS_sparc) || defined(MACHREGS_powerpc))
-import Panic
+import GHC.Utils.Panic.Plain
 #endif
-import Reg
+import GHC.Platform.Reg
 
-#include "ghcautoconf.h"
 #include "stg/MachRegs.h"
 
 #if defined(MACHREGS_i386) || defined(MACHREGS_x86_64)
@@ -41,65 +40,59 @@ import Reg
 #  define r15   15
 # endif
 
-# define fake0 16
-# define fake1 17
-# define fake2 18
-# define fake3 19
-# define fake4 20
-# define fake5 21
 
 -- N.B. XMM, YMM, and ZMM are all aliased to the same hardware registers hence
 -- being assigned the same RegNos.
-# define xmm0  24
-# define xmm1  25
-# define xmm2  26
-# define xmm3  27
-# define xmm4  28
-# define xmm5  29
-# define xmm6  30
-# define xmm7  31
-# define xmm8  32
-# define xmm9  33
-# define xmm10 34
-# define xmm11 35
-# define xmm12 36
-# define xmm13 37
-# define xmm14 38
-# define xmm15 39
+# define xmm0  16
+# define xmm1  17
+# define xmm2  18
+# define xmm3  19
+# define xmm4  20
+# define xmm5  21
+# define xmm6  22
+# define xmm7  23
+# define xmm8  24
+# define xmm9  25
+# define xmm10 26
+# define xmm11 27
+# define xmm12 28
+# define xmm13 29
+# define xmm14 30
+# define xmm15 31
 
-# define ymm0  24
-# define ymm1  25
-# define ymm2  26
-# define ymm3  27
-# define ymm4  28
-# define ymm5  29
-# define ymm6  30
-# define ymm7  31
-# define ymm8  32
-# define ymm9  33
-# define ymm10 34
-# define ymm11 35
-# define ymm12 36
-# define ymm13 37
-# define ymm14 38
-# define ymm15 39
+# define ymm0  16
+# define ymm1  17
+# define ymm2  18
+# define ymm3  19
+# define ymm4  20
+# define ymm5  21
+# define ymm6  22
+# define ymm7  23
+# define ymm8  24
+# define ymm9  25
+# define ymm10 26
+# define ymm11 27
+# define ymm12 28
+# define ymm13 29
+# define ymm14 30
+# define ymm15 31
 
-# define zmm0  24
-# define zmm1  25
-# define zmm2  26
-# define zmm3  27
-# define zmm4  28
-# define zmm5  29
-# define zmm6  30
-# define zmm7  31
-# define zmm8  32
-# define zmm9  33
-# define zmm10 34
-# define zmm11 35
-# define zmm12 36
-# define zmm13 37
-# define zmm14 38
-# define zmm15 39
+# define zmm0  16
+# define zmm1  17
+# define zmm2  18
+# define zmm3  19
+# define zmm4  20
+# define zmm5  21
+# define zmm6  22
+# define zmm7  23
+# define zmm8  24
+# define zmm9  25
+# define zmm10 26
+# define zmm11 27
+# define zmm12 28
+# define zmm13 29
+# define zmm14 30
+# define zmm15 31
 
 -- Note: these are only needed for ARM/ARM64 because globalRegMaybe is now used in CmmSink.hs.
 -- Since it's only used to check 'isJust', the actual values don't matter, thus
@@ -350,6 +343,42 @@ import Reg
 # define f29 61
 # define f30 62
 # define f31 63
+
+#elif defined(MACHREGS_s390x)
+
+# define r0   0
+# define r1   1
+# define r2   2
+# define r3   3
+# define r4   4
+# define r5   5
+# define r6   6
+# define r7   7
+# define r8   8
+# define r9   9
+# define r10 10
+# define r11 11
+# define r12 12
+# define r13 13
+# define r14 14
+# define r15 15
+
+# define f0  16
+# define f1  17
+# define f2  18
+# define f3  19
+# define f4  20
+# define f5  21
+# define f6  22
+# define f7  23
+# define f8  24
+# define f9  25
+# define f10 26
+# define f11 27
+# define f12 28
+# define f13 29
+# define f14 30
+# define f15 31
 
 #endif
 
@@ -637,7 +666,8 @@ haveRegBase = False
 globalRegMaybe :: GlobalReg -> Maybe RealReg
 #if defined(MACHREGS_i386) || defined(MACHREGS_x86_64) \
     || defined(MACHREGS_sparc) || defined(MACHREGS_powerpc) \
-    || defined(MACHREGS_arm) || defined(MACHREGS_aarch64)
+    || defined(MACHREGS_arm) || defined(MACHREGS_aarch64) \
+    || defined(MACHREGS_s390x)
 # if defined(REG_Base)
 globalRegMaybe BaseReg                  = Just (RealRegSingle REG_Base)
 # endif
@@ -837,15 +867,16 @@ freeReg :: RegNo -> Bool
 
 # if defined(MACHREGS_i386)
 freeReg esp = False -- %esp is the C stack pointer
-freeReg esi = False -- Note [esi/edi not allocatable]
+freeReg esi = False -- Note [esi/edi/ebp not allocatable]
 freeReg edi = False
+freeReg ebp = False
 # endif
 # if defined(MACHREGS_x86_64)
 freeReg rsp = False  --        %rsp is the C stack pointer
 # endif
 
 {-
-Note [esi/edi not allocatable]
+Note [esi/edi/ebp not allocatable]
 
 %esi is mapped to R1, so %esi would normally be allocatable while it
 is not being used for R1.  However, %esi has no 8-bit version on x86,
@@ -855,7 +886,7 @@ graph-colouring allocator also cannot handle this - it was designed
 with more flexibility in mind, but the current implementation is
 restricted to the same set of classes as the linear allocator.
 
-Hence, on x86 esi and edi are treated as not allocatable.
+Hence, on x86 esi, edi and ebp are treated as not allocatable.
 -}
 
 -- split patterns in two functions to prevent overlaps
@@ -884,99 +915,27 @@ freeRegBase _ = True
 #elif defined(MACHREGS_powerpc)
 
 freeReg 0 = False -- Used by code setting the back chain pointer
-                  -- in stack reallocations on Linux
-                  -- r0 is not usable in all insns so also reserved
-                  -- on Darwin.
+                  -- in stack reallocations on Linux.
+                  -- Moreover r0 is not usable in all insns.
 freeReg 1 = False -- The Stack Pointer
-# if !defined(MACHREGS_darwin)
--- most non-darwin powerpc OSes use r2 as a TOC pointer or something like that
+-- most ELF PowerPC OSes use r2 as a TOC pointer
 freeReg 2 = False
 freeReg 13 = False -- reserved for system thread ID on 64 bit
 -- at least linux in -fPIC relies on r30 in PLT stubs
 freeReg 30 = False
 {- TODO: reserve r13 on 64 bit systems only and r30 on 32 bit respectively.
    For now we use r30 on 64 bit and r13 on 32 bit as a temporary register
-   in stack handling code. See compiler/nativeGen/PPC/Ppr.hs.
+   in stack handling code. See compiler/GHC/CmmToAsm/PPC/Instr.hs.
 
    Later we might want to reserve r13 and r30 only where it is required.
    Then use r12 as temporary register, which is also what the C ABI does.
 -}
 
-# endif
 # if defined(REG_Base)
 freeReg REG_Base  = False
 # endif
-# if defined(REG_R1)
-freeReg REG_R1    = False
-# endif
-# if defined(REG_R2)
-freeReg REG_R2    = False
-# endif
-# if defined(REG_R3)
-freeReg REG_R3    = False
-# endif
-# if defined(REG_R4)
-freeReg REG_R4    = False
-# endif
-# if defined(REG_R5)
-freeReg REG_R5    = False
-# endif
-# if defined(REG_R6)
-freeReg REG_R6    = False
-# endif
-# if defined(REG_R7)
-freeReg REG_R7    = False
-# endif
-# if defined(REG_R8)
-freeReg REG_R8    = False
-# endif
-# if defined(REG_R9)
-freeReg REG_R9    = False
-# endif
-# if defined(REG_R10)
-freeReg REG_R10   = False
-# endif
-# if defined(REG_F1)
-freeReg REG_F1    = False
-# endif
-# if defined(REG_F2)
-freeReg REG_F2    = False
-# endif
-# if defined(REG_F3)
-freeReg REG_F3    = False
-# endif
-# if defined(REG_F4)
-freeReg REG_F4    = False
-# endif
-# if defined(REG_F5)
-freeReg REG_F5    = False
-# endif
-# if defined(REG_F6)
-freeReg REG_F6    = False
-# endif
-# if defined(REG_D1)
-freeReg REG_D1    = False
-# endif
-# if defined(REG_D2)
-freeReg REG_D2    = False
-# endif
-# if defined(REG_D3)
-freeReg REG_D3    = False
-# endif
-# if defined(REG_D4)
-freeReg REG_D4    = False
-# endif
-# if defined(REG_D5)
-freeReg REG_D5    = False
-# endif
-# if defined(REG_D6)
-freeReg REG_D6    = False
-# endif
 # if defined(REG_Sp)
 freeReg REG_Sp    = False
-# endif
-# if defined(REG_Su)
-freeReg REG_Su    = False
 # endif
 # if defined(REG_SpLim)
 freeReg REG_SpLim = False
@@ -1120,9 +1079,6 @@ freeReg REG_D6_2  = False
 # endif
 # if defined(REG_Sp)
 freeReg REG_Sp    = False
-# endif
-# if defined(REG_Su)
-freeReg REG_Su    = False
 # endif
 # if defined(REG_SpLim)
 freeReg REG_SpLim = False

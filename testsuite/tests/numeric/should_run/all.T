@@ -7,7 +7,7 @@ test('arith001', normal, compile_and_run, [''])
 test('arith002', normal, compile_and_run, [''])
 test('arith003', normal, compile_and_run, [''])
 test('arith004', normal, compile_and_run, [''])
-test('arith005', when(platform('i386-apple-darwin'), expect_broken_for(7043, 'ghci')), compile_and_run, [''])
+test('arith005', when(platform('i386-apple-darwin'), expect_broken_for(7043, ['ghci'])), compile_and_run, [''])
 test('arith006', normal, compile_and_run, [''])
 test('arith007', normal, compile_and_run, [''])
 
@@ -41,7 +41,8 @@ test('arith018', normal, compile_and_run, [''])
 test('arith019', normal, compile_and_run, [''])
 test('expfloat', normal, compile_and_run, [''])
 
-test('FloatFnInverses', normal, compile_and_run, [''])
+test('FloatFnInverses', [when(opsys('mingw32'), expect_broken(15670))],
+     compile_and_run, [''])
 
 test('T1603', skip, compile_and_run, [''])
 test('T3676', expect_broken(3676), compile_and_run, [''])
@@ -53,7 +54,7 @@ test('mul2', normal, compile_and_run, ['-fobject-code'])
 test('quotRem2', normal, compile_and_run, ['-fobject-code'])
 test('T5863', normal, compile_and_run, [''])
 
-test('T7014', [], run_command, ['$MAKE -s --no-print-directory T7014'])
+test('T7014', [], makefile_test, [])
 
 test('T7233', normal, compile_and_run, [''])
 test('NumDecimals', normal, compile_and_run, [''])
@@ -66,3 +67,5 @@ test('T10962', omit_ways(['ghci']), compile_and_run, ['-O2'])
 test('T11702', extra_ways(['optasm']), compile_and_run, [''])
 test('T12136', normal, compile_and_run, [''])
 test('T15301', normal, compile_and_run, ['-O2'])
+test('T497', normal, compile_and_run, ['-O'])
+test('T17303', normal, compile_and_run, [''])

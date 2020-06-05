@@ -7,23 +7,25 @@ Using GHCi
    single: GHCi
    single: interpreter
    single: interactive
-   single: Hugs
    single: Foreign Function Interface; GHCi support
    single: FFI; GHCi support
 
-GHCi [1]_ is GHC's interactive environment, in which Haskell expressions
-can be interactively evaluated and programs can be interpreted. If
-you're familiar with `Hugs <http://www.haskell.org/hugs/>`__, then
-you'll be right at home with GHCi. However, GHCi also has support for
-interactively loading compiled code, as well as supporting all [2]_ the
-language extensions that GHC provides. GHCi also includes an interactive
+GHCi [1]_ is GHC's interactive environment that includes an interactive
 debugger (see :ref:`ghci-debugger`).
+
+GHCi can
+
+- interactively evaluate Haskell expressions
+- interpret Haskell programs
+- load GHC-compiled modules.
+
+At the moment GHCi supports most of GHC's language extensions.
+
 
 .. [1]
    The "i" stands for “Interactive”
 
-.. [2]
-   except ``foreign export``, at the moment
+
 
 
 .. _ghci-introduction:
@@ -37,7 +39,7 @@ command ``ghci``:
 .. code-block:: none
 
     $ ghci
-    GHCi, version 8.y.z: http://www.haskell.org/ghc/  :? for help
+    GHCi, version 8.y.z: https://www.haskell.org/ghc/  :? for help
     Prelude>
 
 There may be a short pause while GHCi loads the prelude and standard
@@ -1181,20 +1183,20 @@ IO ()``, and it works by converting the value to ``String`` using ``show``.
 This is not ideal in certain cases, like when the output is long, or
 contains strings with non-ascii characters.
 
-The :ghc-flag:`-interactive-print ⟨expr⟩` flag allows to specify any function
+The :ghc-flag:`-interactive-print ⟨name⟩` flag allows to specify any function
 of type ``C a => a -> IO ()``, for some constraint ``C``, as the function for
 printing evaluated expressions. The function can reside in any loaded module or
 any registered package, but only when it resides in a registered package will
 it survive a :ghci-cmd:`:cd`, :ghci-cmd:`:add`, :ghci-cmd:`:load`,
 :ghci-cmd:`:reload` or, :ghci-cmd:`:set`.
 
-.. ghc-flag:: -interactive-print ⟨expr⟩
+.. ghc-flag:: -interactive-print ⟨name⟩
     :shortdesc: :ref:`Select the function to use for printing evaluated
         expressions in GHCi <ghci-interactive-print>`
     :type: dynamic
     :category:
 
-    Set the function used by GHCi to print evaluation results. Expression
+    Set the function used by GHCi to print evaluation results. Given name
     must be of type ``C a => a -> IO ()``.
 
 As an example, suppose we have following special printing module: ::
@@ -1224,7 +1226,7 @@ will start an interactive session where values with be printed using
 A custom pretty printing function can be used, for example, to format
 tree-like and nested structures in a more readable way.
 
-The :ghc-flag:`-interactive-print ⟨expr⟩` flag can also be used when running
+The :ghc-flag:`-interactive-print ⟨name⟩` flag can also be used when running
 GHC in ``-e mode``:
 
 .. code-block:: none
@@ -1434,9 +1436,14 @@ triggered (see :ref:`nested-breakpoints`). Rather than forcing thunks,
 :ghci-cmd:`:print` binds each thunk to a fresh variable beginning with an
 underscore, in this case ``_t1``.
 
-The flag :ghc-flag:`-fprint-evld-with-show` instructs :ghci-cmd:`:print` to reuse
-available ``Show`` instances when possible. This happens only when the
-contents of the variable being inspected are completely evaluated.
+.. ghc-flag:: -fprint-evld-with-show
+    :shortdesc: Instruct :ghci-cmd:`:print` to use ``Show`` instances where possible.
+    :category: interactive
+    :type: dynamic
+
+    The flag :ghc-flag:`-fprint-evld-with-show` instructs :ghci-cmd:`:print` to reuse
+    available ``Show`` instances when possible. This happens only when the
+    contents of the variable being inspected are completely evaluated.
 
 If we aren't concerned about preserving the evaluatedness of a variable, we can
 use :ghci-cmd:`:force` instead of :ghci-cmd:`:print`. The :ghci-cmd:`:force`
@@ -1556,17 +1563,32 @@ breakpoint on a let expression, but there will always be a breakpoint on
 its body, because we are usually interested in inspecting the values of
 the variables bound by the let.
 
-Listing and deleting breakpoints
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Managing breakpoints
+^^^^^^^^^^^^^^^^^^^^
 
-The list of breakpoints currently enabled can be displayed using
+The list of breakpoints currently defined can be displayed using
 :ghci-cmd:`:show breaks`:
 
 .. code-block:: none
 
     *Main> :show breaks
-    [0] Main qsort.hs:1:11-12
-    [1] Main qsort.hs:2:15-46
+    [0] Main qsort.hs:1:11-12 enabled
+    [1] Main qsort.hs:2:15-46 enabled
+
+To disable one or several defined breakpoint, use the :ghci-cmd:`:disable` command with
+one or several blank separated numbers
+given in the output from :ghci-cmd:`:show breaks`:.
+To disable all breakpoints at once, use ``:disable *``.
+
+.. code-block:: none
+
+    *Main> :disable 0
+    *Main> :show breaks
+    [0] Main qsort.hs:1:11-12 disabled
+    [1] Main qsort.hs:2:15-46 enabled
+
+Disabled breakpoints can be (re-)enabled with the :ghci-cmd:`:enable` command.
+The parameters of the :ghci-cmd:`:disable` and :ghci-cmd:`:enable` commands are identical.
 
 To delete a breakpoint, use the :ghci-cmd:`:delete` command with the number
 given in the output from :ghci-cmd:`:show breaks`:
@@ -1575,7 +1597,7 @@ given in the output from :ghci-cmd:`:show breaks`:
 
     *Main> :delete 0
     *Main> :show breaks
-    [1] Main qsort.hs:2:15-46
+    [1] Main qsort.hs:2:15-46 disabled
 
 To delete all breakpoints at once, use ``:delete *``.
 
@@ -2052,7 +2074,7 @@ by using the :ghc-flag:`-package ⟨pkg⟩` flag:
 .. code-block:: none
 
     $ ghci -package readline
-    GHCi, version 8.y.z: http://www.haskell.org/ghc/  :? for help
+    GHCi, version 8.y.z: https://www.haskell.org/ghc/  :? for help
     Loading package base ... linking ... done.
     Loading package readline-1.0 ... linking ... done.
     Prelude>
@@ -2091,7 +2113,7 @@ libraries, in this order:
    systems may be overridden by setting the :envvar:`LD_LIBRARY_PATH`
    environment variable.
 
--  The linker standard library search can also be overriden on some systems using
+-  The linker standard library search can also be overridden on some systems using
    the :envvar:`LIBRARY_PATH` environment variable. Because of some
    implementation detail on Windows, setting ``LIBRARY_PATH`` will also extend
    the system loader path for any library it finds. So often setting
@@ -2101,7 +2123,7 @@ On systems with ``.dll``-style shared libraries, the actual library
 loaded will be ``lib.dll``, ``liblib.dll``. GHCi also has full support for
 import libraries, either Microsoft style ``.lib``, or GNU GCC style ``.a`` and
 ``.dll.a`` libraries. If you have an import library it is advisable to always
-specify the import libary instead of the ``.dll``. e.g. use ``-lgcc` instead of
+specify the import library instead of the ``.dll``. e.g. use ``-lgcc` instead of
 ``-llibgcc_s_seh-1``. Again, GHCi will signal an error if it can't find the
 library.
 
@@ -2212,7 +2234,7 @@ commonly used commands.
 
        This output shows that, in the context of the current session (ie
        in the scope of ``Prelude``), the first group of items from
-       ``Data.Maybe`` are not in scope (althought they are available in
+       ``Data.Maybe`` are not in scope (although they are available in
        fully qualified form in the GHCi session - see
        :ref:`ghci-scope`), whereas the second group of items are in
        scope (via ``Prelude``) and are therefore available either
@@ -2366,12 +2388,21 @@ commonly used commands.
     Typing ``:def`` on its own lists the currently-defined macros.
     Attempting to redefine an existing command name results in an error
     unless the ``:def!`` form is used, in which case the old command
-    with that name is silently overwritten.
+    with that name is silently overwritten. However for builtin commands
+    the old command can still be used by preceding the command name with
+    a double colon (eg ``::load``).
+    It's not possible to redefine the commands ``:{``, ``:}`` and ``:!``.
 
 .. ghci-cmd:: :delete; * | ⟨num⟩ ...
 
     Delete one or more breakpoints by number (use :ghci-cmd:`:show breaks` to
     see the number of each breakpoint). The ``*`` form deletes all the
+    breakpoints.
+
+.. ghci-cmd:: :disable; * | ⟨num⟩ ...
+
+    Disable one or more breakpoints by number (use :ghci-cmd:`:show breaks` to
+    see the number and state of each breakpoint). The ``*`` form disables all the
     breakpoints.
 
 .. ghci-cmd:: :doc; ⟨name⟩
@@ -2390,6 +2421,12 @@ commonly used commands.
     error. The editor to invoke is taken from the :envvar:`EDITOR` environment
     variable, or a default editor on your system if :envvar:`EDITOR` is not
     set. You can change the editor using :ghci-cmd:`:set editor`.
+
+.. ghci-cmd:: :enable; * | ⟨num⟩ ...
+
+    Enable one or more disabled breakpoints by number (use :ghci-cmd:`:show breaks` to
+    see the number and state of each breakpoint). The ``*`` form enables all the
+    disabled breakpoints.
 
 .. ghci-cmd:: :etags
 
@@ -2447,6 +2484,39 @@ commonly used commands.
     The command ``:info!`` works in a similar fashion but it removes
     restriction (b), showing all instances that are in scope and mention
     ⟨name⟩ in their head.
+
+.. ghci-cmd:: :instances; ⟨type⟩
+
+    Displays all the class instances available to the argument ⟨type⟩.
+    The command will match ⟨type⟩ with the first parameter of every
+    instance and then check that all constraints are satisfiable.
+
+    When combined with :extension:`PartialTypeSignatures`, a user can insert
+    wildcards into a query and learn the constraints required of each
+    wildcard for ⟨type⟩ match with an instance.
+
+    The output is a listing of all matching instances, simplified and
+    instantiated as much as possible.
+
+    For example:
+
+    .. code-block:: none
+
+         > :instances Maybe (Maybe Int)
+         instance Eq (Maybe (Maybe Int)) -- Defined in ‘GHC.Maybe’
+         instance Ord (Maybe (Maybe Int)) -- Defined in ‘GHC.Maybe’
+         instance Show (Maybe (Maybe Int)) -- Defined in ‘GHC.Show’
+         instance Read (Maybe (Maybe Int)) -- Defined in ‘GHC.Read’
+
+         > :set -XPartialTypeSignatures -fno-warn-partial-type-signatures
+
+         > :instances Maybe _
+         instance Eq _ => Eq (Maybe _) -- Defined in ‘GHC.Maybe’
+         instance Semigroup _ => Monoid (Maybe _) -- Defined in ‘GHC.Base’
+         instance Ord _ => Ord (Maybe _) -- Defined in ‘GHC.Maybe’
+         instance Semigroup _ => Semigroup (Maybe _) -- Defined in ‘GHC.Base’
+         instance Show _ => Show (Maybe _) -- Defined in ‘GHC.Show’
+         instance Read _ => Read (Maybe _) -- Defined in ‘GHC.Read’
 
 .. ghci-cmd:: :issafe; [⟨module⟩]
 
@@ -2625,9 +2695,11 @@ commonly used commands.
 
 .. ghci-cmd:: :script; [⟨n⟩] ⟨filename⟩
 
-    Executes the lines of a file as a series of GHCi commands. This
-    command is compatible with multiline statements as set by
-    :ghci-cmd:`:set +m`
+    Executes the lines of a file as a series of GHCi commands. The syntax for
+    file-name arguments respects shell quoting rules, i.e., file names
+    containing spaces can be enclosed in double quotes or with spaces escaped
+    with a backslash. This command is compatible with multiline statements as
+    set by :ghci-cmd:`:set +m`
 
 .. ghci-cmd:: :set; [⟨option⟩ ...]
 
@@ -2648,6 +2720,17 @@ commonly used commands.
 .. ghci-cmd:: :set editor; ⟨cmd⟩
 
     Sets the command used by :ghci-cmd:`:edit` to ⟨cmd⟩.
+
+.. ghci-cmd:: :set local-config; ⟨source|ignore⟩
+
+    If ``ignore``, :file:`./.ghci` files will be ignored (sourcing
+    untrusted local scripts is a security risk).   The default is
+    ``source``.  Set this directive in your user :file:`.ghci`
+    script, i.e. before the local script would be sourced.
+
+    Even when set to ``ignore``, a local script will still be
+    processed if given by :ghc-flag:`-ghci-script` on the command
+    line, or sourced via :ghci-cmd:`:script`.
 
 .. ghci-cmd:: :set prog; ⟨prog⟩
 
@@ -2718,8 +2801,10 @@ commonly used commands.
     If a number is given before the command, then the commands are run
     when the specified breakpoint (only) is hit. This can be quite
     useful: for example, ``:set stop 1 :continue`` effectively disables
-    breakpoint 1, by running :ghci-cmd:`:continue` whenever it is hit (although
-    GHCi will still emit a message to say the breakpoint was hit). What's more,
+    breakpoint 1, by running :ghci-cmd:`:continue` whenever it is hit
+    In this case GHCi will still emit a message to say the breakpoint was hit.
+    If you don't want such a message, you can use the :ghci-cmd:`:disable`
+    command. What's more,
     with cunning use of :ghci-cmd:`:def` and :ghci-cmd:`:cmd` you can use
     :ghci-cmd:`:set stop` to implement conditional breakpoints:
 
@@ -2803,7 +2888,10 @@ commonly used commands.
 .. ghci-cmd:: :steplocal
 
     Enable only breakpoints in the current top-level binding and resume
-    evaluation at the last breakpoint.
+    evaluation at the last breakpoint. Continuation with
+    :ghci-cmd:`:steplocal` is not possible if this last breakpoint was
+    hit by an error (:ghc-flag:`-fbreak-on-error`) or an
+    exception (:ghc-flag:`-fbreak-on-exception`).
 
 .. ghci-cmd:: :stepmodule
 
@@ -2861,7 +2949,7 @@ commonly used commands.
 	*X> :type +d length
 	length :: [a] -> Int
 
-.. ghci-cmd:: :type-at; ⟨module⟩ ⟨line⟩ ⟨col⟩ ⟨end-line⟩ ⟨end-col⟩ [⟨name⟩]
+.. ghci-cmd:: :type-at; ⟨path⟩ ⟨line⟩ ⟨col⟩ ⟨end-line⟩ ⟨end-col⟩ [⟨name⟩]
 
     Reports the inferred type at the given span/position in the module, e.g.:
 
@@ -2872,6 +2960,13 @@ commonly used commands.
 
     This command is useful when integrating GHCi with text editors and
     IDEs for providing a show-type-under-point facility.
+
+    The first parameter (path) must be a file path and not a module name.
+    The type of this path is dependent on how the module was loaded into GHCi:
+    If the module was loaded by name, then the path name calculated by GHCi
+    as described in :ref:`ghci-modules-filenames` must be used.
+    If the module was loaded with an absolute or a relative path,
+    then the same path must be specified.
 
     The last string parameter is useful for when the span is out of
     date, i.e. the file changed and the code has moved. In which case
@@ -2905,6 +3000,12 @@ commonly used commands.
     an identifier in editors and IDEs.
 
     The :ghci-cmd:`:uses` command requires :ghci-cmd:`:set +c` to be set.
+
+.. ghci-cmd:: :: ⟨builtin-command⟩
+
+    Executes the GHCi built-in command (e.g. ``::type 3``). That is,
+    look up on the list of builtin commands, excluding defined macros.
+    See also: :ghci-cmd:`:def`.
 
 .. ghci-cmd:: :! ⟨command⟩
 
@@ -3101,15 +3202,14 @@ When it starts, unless the :ghc-flag:`-ignore-dot-ghci` flag is given, GHCi
 reads and executes commands from the following files, in this order, if
 they exist:
 
-1. :file:`./.ghci`
+1. :file:`{ghcappdata}/ghci.conf`, where ⟨ghcappdata⟩ depends on
+   your system, but is usually something like :file:`$HOME/.ghc` on
+   Unix or :file:`C:/Documents and Settings/user/Application
+   Data/ghc` on Windows.
 
-2. :file:`{appdata}/ghc/ghci.conf`, where ⟨appdata⟩ depends on your system,
-   but is usually something like
-   :file:`C:/Documents and Settings/user/Application Data`
+2. :file:`$HOME/.ghci`
 
-3. On Unix: :file:`$HOME/.ghc/ghci.conf`
-
-4. :file:`$HOME/.ghci`
+3. :file:`./.ghci`
 
 The :file:`ghci.conf` file is most useful for turning on favourite options
 (e.g. ``:set +s``), and defining useful macros.
@@ -3133,6 +3233,12 @@ three subdirectories A, B and C, you might put the following lines in
 (Note that strictly speaking the :ghc-flag:`-i` flag is a static one, but in
 fact it works to set it using :ghci-cmd:`:set` like this. The changes won't take
 effect until the next :ghci-cmd:`:load`, though.)
+
+.. warning::
+    Sourcing untrusted :file:`./.ghci` files is a security risk.
+    They can contain arbitrary commands that will be executed as the
+    user.  Use :ghci-cmd:`:set local-config` to inhibit the
+    processing of :file:`./.ghci` files.
 
 Once you have a library of GHCi macros, you may want to source them from
 separate files, or you may want to source your ``.ghci`` file into your
@@ -3166,8 +3272,9 @@ read:
     :type: dynamic
     :category:
 
-    Read a specific file after the usual startup files. Maybe be
+    Read a specific file after the usual startup files.  May be
     specified repeatedly for multiple inputs.
+    :ghc-flag:`-ignore-dot-ghci` does not apply to these files.
 
 When defining GHCi macros, there is some important behavior you should
 be aware of when names may conflict with built-in commands, especially
@@ -3202,6 +3309,9 @@ Here are some examples:
 3. You have a macro ``:time`` and a macro ``:type``, and enter ``:t 3``
 
    You get ``:type 3`` with your defined macro.
+
+When giving priority to built-in commands, you can use
+:ghci-cmd:`:: ⟨builtin-command⟩`, like ``::type 3``.
 
 .. _dot-haskeline-file:
 
@@ -3287,6 +3397,39 @@ dynamically-linked) from GHC itself.  So for example:
 This feature is experimental in GHC 8.0.x, but it may become the
 default in future releases.
 
+.. _external-interpreter-proxy:
+
+Running the interpreter on a different host
+-------------------------------------------
+
+When using the flag :ghc-flag:`-fexternal-interpreter` GHC will
+spawn and communicate with the separate process using pipes.  There
+are scenarios (e.g. when cross compiling) where it is favourable to
+have the communication happen over the network. GHC provides two
+utilities for this, which can be found in the ``utils`` directory.
+
+- ``remote-iserv`` needs to be built with the cross compiler to be
+  executed on the remote host. Or in the case of using it on the
+  same host the stage2 compiler will do as well.
+
+- ``iserv-proxy`` needs to be built on the build machine by the
+  build compiler.
+
+After starting ``remote-iserv ⟨tmp_dir⟩ ⟨port⟩`` on the target and
+providing it with a temporary folder (where it will copy the
+necessary libraries to load to) and port it will listen for
+the proxy to connect.
+
+Providing :ghc-flag:`-pgmi ⟨/path/to/iserv-proxy⟩ <-pgmi ⟨cmd⟩>` and
+:ghc-flag:`-opti ⟨slave-ip⟩ -opti ⟨slave-port⟩ [-opti -v] <-opti ⟨option⟩>` in
+addition to :ghc-flag:`-fexternal-interpreter` will then make ghc go through the
+proxy instead.
+
+There are some limitations when using this. File and process IO
+will be executed on the target. As such packages like ``git-embed``,
+``file-embed`` and others might not behave as expected if the target
+and host do not share the same filesystem.
+
 .. _ghci-faq:
 
 FAQ and Things To Watch Out For
@@ -3308,11 +3451,29 @@ The interpreter can't load modules with foreign export declarations!
     need to go fast, rather than interpreting them with optimisation
     turned on.
 
-Unboxed tuples don't work with GHCi
-    That's right. You can always compile a module that uses unboxed
-    tuples and load it into GHCi, however. (Incidentally the previous
-    point, namely that :ghc-flag:`-O` is incompatible with GHCi, is because the
-    bytecode compiler can't deal with unboxed tuples).
+Modules using unboxed tuples or sums will automatically enable :ghc-flag:`-fobject-code`
+
+    .. index::
+       single: unboxed tuples, sums; and GHCi
+
+    The bytecode interpreter doesn't support most uses of unboxed tuples or
+    sums, so GHCi will automatically compile these modules, and all modules
+    they depend on, to object code instead of bytecode.
+
+    GHCi checks for the presence of unboxed tuples and sums in a somewhat
+    conservative fashion: it simply checks to see if a module enables the
+    :extension:`UnboxedTuples` or :extension:`UnboxedSums` language extensions.
+    It is not always the case that code which enables :extension:`UnboxedTuples`
+    or :extension:`UnboxedSums` requires :ghc-flag:`-fobject-code`, so if you
+    *really* want to compile
+    :extension:`UnboxedTuples`/:extension:`UnboxedSums`-using code to
+    bytecode, you can do so explicitly by enabling the :ghc-flag:`-fbyte-code`
+    flag. If you do this, do note that bytecode interpreter will throw an error
+    if it encounters unboxed tuple/sum–related code that it cannot handle.
+
+    Incidentally, the previous point, that :ghc-flag:`-O` is
+    incompatible with GHCi, is because the bytecode compiler can't
+    deal with unboxed tuples or sums.
 
 Concurrent threads don't carry on running when GHCi is waiting for input.
     This should work, as long as your GHCi was built with the

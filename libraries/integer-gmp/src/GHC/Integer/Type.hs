@@ -51,7 +51,7 @@ default ()
 --
 --   {-# CONSTANT_FOLDED plusInteger #-}
 --
--- which is simply expaned into a
+-- which is simply expanded into a
 --
 --   {-# NOINLINE plusInteger #-}
 --
@@ -136,13 +136,21 @@ instance Eq BigNat where
 instance Ord BigNat where
     compare = compareBigNat
 
--- | Invariant: 'Jn#' and 'Jp#' are used iff value doesn't fit in 'S#'
+-- [Implementation notes]
+--
+-- Invariant: 'Jn#' and 'Jp#' are used iff value doesn't fit in 'S#'
 --
 -- Useful properties resulting from the invariants:
 --
 --  - @abs ('S#' _) <= abs ('Jp#' _)@
 --  - @abs ('S#' _) <  abs ('Jn#' _)@
+
+-- | Arbitrary precision integers. In contrast with fixed-size integral types
+-- such as 'Int', the 'Integer' type represents the entire infinite range of
+-- integers.
 --
+-- For more information about this type's representation, see the comments in
+-- its implementation.
 data Integer  = S#                !Int#
                 -- ^ iff value in @[minBound::'Int', maxBound::'Int']@ range
               | Jp# {-# UNPACK #-} !BigNat
@@ -151,7 +159,7 @@ data Integer  = S#                !Int#
                 -- ^ iff value in @]-inf, minBound::'Int'[@ range
 
 -- NOTE: the above representation is baked into the GHCi debugger in
--- compiler/ghci/RtClosureInspect.hs. If you change it here, fixes
+-- GHC.Runtime.Heap.Inspect. If you change it here, fixes
 -- will be required over there too. Tests for this are in
 -- testsuite/tests/ghci.debugger.
 
@@ -470,10 +478,9 @@ timesInteger x       (S# 1#) = x
 timesInteger (S# 1#) y       = y
 timesInteger x      (S# -1#) = negateInteger x
 timesInteger (S# -1#) y      = negateInteger y
-timesInteger (S# x#) (S# y#)
-  = case mulIntMayOflo# x# y# of
-    0# -> S# (x# *# y#)
-    _  -> timesInt2Integer x# y#
+timesInteger (S# x#) (S# y#) = case timesInt2# x# y# of
+                                 (# 0#, _h, l #) -> S# l
+                                 (# _ ,  h, l #) -> int2ToInteger h l
 timesInteger x@(S# _) y      = timesInteger y x
 -- no S# as first arg from here on
 timesInteger (Jp# x) (Jp# y) = Jp# (timesBigNat x y)
@@ -495,6 +502,22 @@ sqrInteger (S# j#) | isTrue# (absI# j# <=# SQRT_INT_MAXBOUND#) = S# (j# *# j#)
 sqrInteger (S# j#) = timesInt2Integer j# j#
 sqrInteger (Jp# bn) = Jp# (sqrBigNat bn)
 sqrInteger (Jn# bn) = Jp# (sqrBigNat bn)
+
+-- | Convert two Int# (resp. high and low bits of a double-word Int#) into an
+-- Integer
+--
+-- Warning: currently it doesn't handle the case where high=minBound and low=0
+-- (i.e. high:low = 100......00 = minBound for a double-word Int)
+int2ToInteger :: Int# -> Int# -> Integer
+int2ToInteger h l
+  | isTrue# (h <# 0#) =
+      case addWordC# (not# (int2Word# l)) 1## of -- two's complement...
+         (# lw,c #) -> Jn# (wordToBigNat2
+                              -- add the carry to the high word
+                              (int2Word# c `plusWord#` not# (int2Word# h))
+                              lw
+                          )
+  | True = Jp# (wordToBigNat2 (int2Word# h) (int2Word# l))
 
 -- | Construct 'Integer' from the product of two 'Int#'s
 timesInt2Integer :: Int# -> Int# -> Integer
@@ -1770,6 +1793,8 @@ foreign import ccall unsafe "gmp.h __gmpn_popcount"
 -- BigNat-wrapped ByteArray#-primops
 
 -- | Return number of limbs contained in 'BigNat'.
+--
+-- The result is always @>= 1@ since even zero is encoded with 1 limb.
 sizeofBigNat# :: BigNat -> GmpSize#
 sizeofBigNat# (BN# x#)
     = sizeofByteArray# x# `uncheckedIShiftRL#` GMP_LIMB_SHIFT#
@@ -1827,7 +1852,7 @@ unsafeSnocFreezeBigNat# mbn0@(MBN# mba0#) limb# s = go s'
         _ <- svoid (writeWordArray# mba# n# limb#)
         unsafeFreezeBigNat# (MBN# mba#)
 
--- | May shrink underlyng 'ByteArray#' if needed to satisfy BigNat invariant
+-- | May shrink underlying 'ByteArray#' if needed to satisfy BigNat invariant
 unsafeRenormFreezeBigNat# :: MutBigNat s -> S s BigNat
 unsafeRenormFreezeBigNat# mbn s
   | isTrue# (n0# ==# 0#)  = (# s'', nullBigNat #)

@@ -127,6 +127,11 @@ T3333:
 	"$(TEST_HC)" -c T3333.c -o T3333.o
 	echo "weak_test 10" | "$(TEST_HC)" $(TEST_HC_OPTS_INTERACTIVE) T3333.hs T3333.o
 
+.PHONY: T11531
+T11531:
+	"$(TEST_HC)" -dynamic -fPIC -c T11531.c -o T11531.o
+	- echo ":q" | "$(TEST_HC)" $(TEST_HC_OPTS_INTERACTIVE) T11531.o T11531.hs 2>&1 |  sed -e '/undefined symbol:/d' 1>&2
+
 .PHONY: T14708
 T14708:
 	$(RM) -rf T14708scratch
@@ -134,3 +139,8 @@ T14708:
 	"$(TEST_HC)" -c add.c -o T14708scratch/add.o
 	"$(AR)" cqs T14708scratch/libadd.a T14708scratch/add.o
 	-"$(TEST_HC)" $(TEST_HC_OPTS_INTERACTIVE) -LT14708scratch -ladd T14708.hs
+
+.PHONY: T15729
+T15729:
+	"$(TEST_HC)" -fPIC -c T15729.c -o bss.o
+	echo "main" | "$(TEST_HC)" $(TEST_HC_OPTS_INTERACTIVE) bss.o T15729.hs

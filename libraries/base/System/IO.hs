@@ -60,6 +60,7 @@ module System.IO (
     -- | These functions are also exported by the "Prelude".
 
     readFile,
+    readFile',
     writeFile,
     appendFile,
 
@@ -123,6 +124,7 @@ module System.IO (
     hGetLine,
     hLookAhead,
     hGetContents,
+    hGetContents',
 
     -- ** Text output
 
@@ -143,6 +145,7 @@ module System.IO (
     getChar,
     getLine,
     getContents,
+    getContents',
     readIO,
     readLn,
 
@@ -197,19 +200,19 @@ module System.IO (
     -- * Newline conversion
 
     -- | In Haskell, a newline is always represented by the character
-    -- '\n'.  However, in files and external character streams, a
+    -- @\'\\n\'@.  However, in files and external character streams, a
     -- newline may be represented by another character sequence, such
-    -- as '\r\n'.
+    -- as @\'\\r\\n\'@.
     --
     -- A text-mode 'Handle' has an associated 'NewlineMode' that
-    -- specifies how to transate newline characters.  The
+    -- specifies how to translate newline characters.  The
     -- 'NewlineMode' specifies the input and output translation
-    -- separately, so that for instance you can translate '\r\n'
-    -- to '\n' on input, but leave newlines as '\n' on output.
+    -- separately, so that for instance you can translate @\'\\r\\n\'@
+    -- to @\'\\n\'@ on input, but leave newlines as @\'\\n\'@ on output.
     --
     -- The default 'NewlineMode' for a 'Handle' is
     -- 'nativeNewlineMode', which does no translation on Unix systems,
-    -- but translates '\r\n' to '\n' and back on Windows.
+    -- but translates @\'\\r\\n\'@ to @\'\\n\'@ and back on Windows.
     --
     -- Binary-mode 'Handle's do no newline translation at all.
     --
@@ -236,7 +239,7 @@ import System.Posix.Types
 
 import GHC.Base
 import GHC.List
-#ifndef mingw32_HOST_OS
+#if !defined(mingw32_HOST_OS)
 import GHC.IORef
 #endif
 import GHC.Num
@@ -305,6 +308,15 @@ getLine         =  hGetLine stdin
 getContents     :: IO String
 getContents     =  hGetContents stdin
 
+-- | The 'getContents'' operation returns all user input as a single string,
+-- which is fully read before being returned
+-- (same as 'hGetContents'' 'stdin').
+--
+-- @since 4.15.0.0
+
+getContents'    :: IO String
+getContents'    =  hGetContents' stdin
+
 -- | The 'interact' function takes a function of type @String->String@
 -- as its argument.  The entire input from the standard input device is
 -- passed to this function as its argument, and the resulting string is
@@ -320,6 +332,15 @@ interact f      =   do s <- getContents
 
 readFile        :: FilePath -> IO String
 readFile name   =  openFile name ReadMode >>= hGetContents
+
+-- | The 'readFile'' function reads a file and
+-- returns the contents of the file as a string.
+-- The file is fully read before being returned, as with 'getContents''.
+--
+-- @since 4.15.0.0
+
+readFile'       :: FilePath -> IO String
+readFile' name  =  openFile name ReadMode >>= hGetContents'
 
 -- | The computation 'writeFile' @file str@ function writes the string @str@,
 -- to the file @file@.
@@ -485,7 +506,7 @@ openTempFile' :: String -> FilePath -> String -> Bool -> CMode
               -> IO (FilePath, Handle)
 openTempFile' loc tmp_dir template binary mode
     | pathSeparator template
-    = fail $ "openTempFile': Template string must not contain path separator characters: "++template
+    = failIO $ "openTempFile': Template string must not contain path separator characters: "++template
     | otherwise = findTempName
   where
     -- We split off the last extension, so we can use .foo.ext files

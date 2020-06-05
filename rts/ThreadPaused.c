@@ -15,6 +15,7 @@
 #include "RaiseAsync.h"
 #include "Trace.h"
 #include "Threads.h"
+#include "sm/NonMovingMark.h"
 
 #include <string.h> // for memmove()
 
@@ -195,6 +196,7 @@ threadPaused(Capability *cap, StgTSO *tso)
     const StgRetInfoTable *info;
     const StgInfoTable *bh_info;
     const StgInfoTable *cur_bh_info USED_IF_THREADS;
+    const StgInfoTable *frame_info;
     StgClosure *bh;
     StgPtr stack_end;
     uint32_t words_to_squeeze = 0;
@@ -218,6 +220,8 @@ threadPaused(Capability *cap, StgTSO *tso)
 
     frame = (StgClosure *)tso->stackobj->sp;
 
+    // N.B. We know that the TSO is owned by the current capability so no
+    // memory barriers are needed here.
     while ((P_)frame < stack_end) {
         info = get_ret_itbl(frame);
 
@@ -226,7 +230,8 @@ threadPaused(Capability *cap, StgTSO *tso)
         case UPDATE_FRAME:
 
             // If we've already marked this frame, then stop here.
-            if (frame->header.info == (StgInfoTable *)&stg_marked_upd_frame_info) {
+            frame_info = frame->header.info;
+            if (frame_info == (StgInfoTable *)&stg_marked_upd_frame_info) {
                 if (prev_was_update_frame) {
                     words_to_squeeze += sizeofW(StgUpdateFrame);
                     weight += weight_pending;
@@ -239,6 +244,9 @@ threadPaused(Capability *cap, StgTSO *tso)
 
             bh = ((StgUpdateFrame *)frame)->updatee;
             bh_info = bh->header.info;
+            IF_NONMOVING_WRITE_BARRIER_ENABLED {
+                updateRemembSetPushClosure(cap, (StgClosure *) bh);
+            }
 
 #if defined(THREADED_RTS)
         retry:
@@ -329,6 +337,18 @@ threadPaused(Capability *cap, StgTSO *tso)
                 goto retry;
             }
 #endif
+
+            IF_NONMOVING_WRITE_BARRIER_ENABLED {
+                if (ip_THUNK(INFO_PTR_TO_STRUCT(bh_info))) {
+                    // We are about to replace a thunk with a blackhole.
+                    // Add the free variables of the closure we are about to
+                    // overwrite to the update remembered set.
+                    // N.B. We caught the WHITEHOLE case above.
+                    updateRemembSetPushThunkEager(cap,
+                                                 THUNK_INFO_PTR_TO_STRUCT(bh_info),
+                                                 (StgThunk *) bh);
+                }
+            }
 
             // The payload of the BLACKHOLE points to the TSO
             ((StgInd *)bh)->indirectee = (StgClosure *)tso;

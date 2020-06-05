@@ -1,10 +1,10 @@
 import System.Environment
-import DynFlags
-import FastString
+import GHC.Driver.Session
+import GHC.Data.FastString
 import GHC
-import StringBuffer
-import Lexer
-import SrcLoc
+import GHC.Data.StringBuffer
+import GHC.Parser.Lexer
+import GHC.Types.SrcLoc
 
 main :: IO ()
 main = do

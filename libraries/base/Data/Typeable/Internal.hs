@@ -18,6 +18,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 
 -----------------------------------------------------------------------------
 -- |
@@ -178,7 +179,8 @@ rnfTyCon (TyCon _ _ m n _ k) = rnfModule m `seq` rnfTrName n `seq` rnfKindRep k
 
 -- | A concrete representation of a (monomorphic) type.
 -- 'TypeRep' supports reasonably efficient equality.
-data TypeRep (a :: k) where
+type TypeRep :: k -> Type
+data TypeRep a where
     -- The TypeRep of Type. See Note [Kind caching], Wrinkle 2
     TrType :: TypeRep Type
     TrTyCon :: { -- See Note [TypeRep fingerprints]
@@ -563,7 +565,7 @@ typeRepTyCon (TrFun {})               = typeRepTyCon $ typeRep @(->)
 eqTypeRep :: forall k1 k2 (a :: k1) (b :: k2).
              TypeRep a -> TypeRep b -> Maybe (a :~~: b)
 eqTypeRep a b
-  | sameTypeRep a b = Just (unsafeCoerce# HRefl)
+  | sameTypeRep a b = Just (unsafeCoerce HRefl)
   | otherwise       = Nothing
 -- We want GHC to inline eqTypeRep to get rid of the Maybe
 -- in the usual case that it is scrutinized immediately. We
@@ -664,8 +666,14 @@ runtimeRepTypeRep r =
       SumRep rs   -> kindedTypeRep @_ @'SumRep
                      `kApp` buildList (map runtimeRepTypeRep rs)
       IntRep      -> rep @'IntRep
-      WordRep     -> rep @'WordRep
+      Int8Rep     -> rep @'Int8Rep
+      Int16Rep    -> rep @'Int16Rep
+      Int32Rep    -> rep @'Int32Rep
       Int64Rep    -> rep @'Int64Rep
+      WordRep     -> rep @'WordRep
+      Word8Rep    -> rep @'Word8Rep
+      Word16Rep   -> rep @'Word16Rep
+      Word32Rep   -> rep @'Word32Rep
       Word64Rep   -> rep @'Word64Rep
       AddrRep     -> rep @'AddrRep
       FloatRep    -> rep @'FloatRep
@@ -773,7 +781,11 @@ showTypeable _ TrType = showChar '*'
 showTypeable _ rep
   | isListTyCon tc, [ty] <- tys =
     showChar '[' . shows ty . showChar ']'
-  | isTupleTyCon tc =
+
+    -- Take care only to render saturated tuple tycon applications
+    -- with tuple notation (#14341).
+  | isTupleTyCon tc,
+    Just _ <- TrType `eqTypeRep` typeRepKind rep =
     showChar '(' . showArgs (showChar ',') tys . showChar ')'
   where (tc, tys) = splitApps rep
 showTypeable _ (TrTyCon {trTyCon = tycon, trKindVars = []})
@@ -822,7 +834,7 @@ splitApps = go []
 -- appropriate module and constructor names.
 --
 -- The ticket to find a better way to deal with this is
--- Trac #14480.
+-- #14480.
 tyConTYPE :: TyCon
 tyConTYPE = mkTyCon (tyConPackage liftedRepTyCon) "GHC.Prim" "TYPE" 0
        (KindRepFun (KindRepTyConApp liftedRepTyCon []) (KindRepTYPE LiftedRep))
@@ -922,7 +934,7 @@ mkTyCon# pkg modl name n_kinds kind_rep
                                      (unpackCStringUtf8# name)
 
 -- it is extremely important that this fingerprint computation
--- remains in sync with that in TcTypeable to ensure that type
+-- remains in sync with that in GHC.Tc.Instance.Typeable to ensure that type
 -- equality is correct.
 
 -- | Exquisitely unsafe.
@@ -942,7 +954,7 @@ mkTyCon pkg modl name (I# n_kinds) kind_rep
     fingerprint :: Fingerprint
     fingerprint = mkTyConFingerprint pkg modl name
 
--- This must match the computation done in TcTypeable.mkTyConRepTyConRHS.
+-- This must match the computation done in GHC.Tc.Instance.Typeable.mkTyConRepTyConRHS.
 mkTyConFingerprint :: String -- ^ package name
                    -> String -- ^ module name
                    -> String -- ^ tycon name

@@ -2,7 +2,7 @@
 {-# LANGUAGE DeriveGeneric, NoImplicitPrelude, MagicHash,
              ExistentialQuantification, ImplicitParams #-}
 {-# OPTIONS_GHC -funbox-strict-fields #-}
-{-# OPTIONS_HADDOCK hide #-}
+{-# OPTIONS_HADDOCK not-home #-}
 
 -----------------------------------------------------------------------------
 -- |
@@ -178,7 +178,7 @@ data SomeAsyncException = forall e . Exception e => SomeAsyncException e
 
 -- | @since 4.7.0.0
 instance Show SomeAsyncException where
-    show (SomeAsyncException e) = show e
+    showsPrec p (SomeAsyncException e) = showsPrec p e
 
 -- | @since 4.7.0.0
 instance Exception SomeAsyncException

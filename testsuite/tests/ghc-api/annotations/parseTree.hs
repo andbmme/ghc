@@ -6,14 +6,14 @@ module Main where
 
 -- import Data.Generics
 import Data.Data
-import Data.List
+import Data.List (intercalate)
 import System.IO
 import GHC
-import BasicTypes
-import DynFlags
-import MonadUtils
-import Outputable
-import Bag (filterBag,isEmptyBag)
+import GHC.Types.Basic
+import GHC.Driver.Session
+import GHC.Utils.Monad
+import GHC.Utils.Outputable
+import GHC.Data.Bag (filterBag,isEmptyBag)
 import System.Directory (removeFile)
 import System.Environment( getArgs )
 import qualified Data.Map as Map
@@ -25,7 +25,7 @@ main = do
         testOneFile libdir "AnnotationTuple"
 
 testOneFile libdir fileName = do
-       ((anns,cs),p) <- runGhc (Just libdir) $ do
+       p <- runGhc (Just libdir) $ do
                         dflags <- getSessionDynFlags
                         setSessionDynFlags dflags
                         let mn =mkModuleName fileName
@@ -38,23 +38,24 @@ testOneFile libdir fileName = do
                         t <- typecheckModule p
                         d <- desugarModule t
                         l <- loadModule d
-                        let ts=typecheckedSource l
-                            r =renamedSource l
-                        return (pm_annotations p,p)
+                        return p
 
+       let anns = pm_annotations p
+           ann_items = apiAnnItems anns
+           ann_eof = apiAnnEofPos anns
        let tupArgs = gq (pm_parsed_source p)
 
        putStrLn (pp tupArgs)
-       putStrLn (intercalate "\n" [showAnns anns])
+       putStrLn (intercalate "\n" [showAnns ann_items, "EOF: " ++ show ann_eof])
 
     where
      gq ast = everything (++) ([] `mkQ` doLHsTupArg) ast
 
      doLHsTupArg :: LHsTupArg GhcPs -> [(SrcSpan,String,HsExpr GhcPs)]
      doLHsTupArg (L l arg@(Present {}))
-                                = [(l,"p",ExplicitTuple noExt [L l arg] Boxed)]
+                                = [(l,"p",ExplicitTuple noExtField [L l arg] Boxed)]
      doLHsTupArg (L l arg@(Missing {}))
-                                = [(l,"m",ExplicitTuple noExt [L l arg] Boxed)]
+                                = [(l,"m",ExplicitTuple noExtField [L l arg] Boxed)]
 
 
 showAnns anns = "[\n" ++ (intercalate "\n"

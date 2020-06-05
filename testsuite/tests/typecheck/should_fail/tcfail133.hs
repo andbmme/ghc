@@ -1,7 +1,7 @@
 {-# LANGUAGE UndecidableInstances, FlexibleInstances, TypeOperators,
              MultiParamTypeClasses, FunctionalDependencies, DatatypeContexts #-}
 
--- This one crashed GHC 6.3 due to an error in TcSimplify.add_ors
+-- This one crashed GHC 6.3 due to an error in GHC.Tc.Solver.add_ors
 
 module Foo where
 
@@ -73,7 +73,7 @@ foo = show $ add (One:@Zero) (One:@One)
 --     Add One One nr', AddDigit (Zero:@nr') One c, Show c
 --
 -- ==> Add One One nr', AddDigit (Zero:@nr') One c, Show c
--- 
+--
 -- ==> Add One One (One:@One), AddDigit (Zero:@(One:@One)) One c, Show c
 --
 -- ==> AddDigit (Zero:@(One:@One)) One c, Show c

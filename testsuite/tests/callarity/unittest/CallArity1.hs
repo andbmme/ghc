@@ -1,42 +1,42 @@
 {-# LANGUAGE TupleSections #-}
-import CoreSyn
-import CoreUtils
-import Id
-import Type
-import MkCore
-import CallArity (callArityRHS)
-import MkId
-import SysTools
-import DynFlags
-import ErrUtils
-import Outputable
-import TysWiredIn
-import Literal
+import GHC.Core
+import GHC.Core.Utils
+import GHC.Types.Id
+import GHC.Core.Type
+import GHC.Core.Make
+import GHC.Core.Opt.CallArity (callArityRHS)
+import GHC.Types.Id.Make
+import GHC.SysTools
+import GHC.Driver.Session
+import GHC.Utils.Error
+import GHC.Utils.Outputable as Outputable
+import GHC.Builtin.Types
+import GHC.Types.Literal
 import GHC
 import Control.Monad
 import Control.Monad.IO.Class
 import System.Environment( getArgs )
-import VarSet
-import PprCore
-import Unique
-import UniqSet
-import CoreLint
-import FastString
+import GHC.Types.Var.Set
+import GHC.Core.Ppr
+import GHC.Types.Unique
+import GHC.Types.Unique.Set
+import GHC.Core.Lint
+import GHC.Data.FastString
 
 -- Build IDs. use mkTemplateLocal, more predictable than proper uniques
 go, go2, x, d, n, y, z, scrutf, scruta :: Id
 [go, go2, x,d, n, y, z, scrutf, scruta, f] = mkTestIds
     (words "go go2 x d n y z scrutf scruta f")
-    [ mkFunTys [intTy, intTy] intTy
-    , mkFunTys [intTy, intTy] intTy
+    [ mkVisFunTys [intTy, intTy] intTy
+    , mkVisFunTys [intTy, intTy] intTy
     , intTy
-    , mkFunTys [intTy] intTy
-    , mkFunTys [intTy] intTy
+    , mkVisFunTys [intTy] intTy
+    , mkVisFunTys [intTy] intTy
     , intTy
     , intTy
-    , mkFunTys [boolTy] boolTy
+    , mkVisFunTys [boolTy] boolTy
     , boolTy
-    , mkFunTys [intTy, intTy] intTy -- protoypical external function
+    , mkVisFunTys [intTy, intTy] intTy -- protoypical external function
     ]
 
 exprs :: [(String, CoreExpr)]
@@ -121,7 +121,7 @@ exprs =
      mkRLet go  (mkLams [x] (mkACase (mkLams [y] $ mkLit 0) (Var go `mkVarApps` [x]))) $
      mkRLet go2 (mkLams [x] (mkACase (mkLams [y] $ mkLit 0) (Var go2 `mkVarApps` [x]))) $
          Var go `mkApps` [go2 `mkLApps` [0,1], mkLit 0]
-  , ("mutual recursion (thunks), called mutiple times (both arity 1 would be bad!)",) $
+  , ("mutual recursion (thunks), called multiple times (both arity 1 would be bad!)",) $
      Let (Rec [ (n, mkACase (mkLams [y] $ mkLit 0) (Var d))
               , (d, mkACase (mkLams [y] $ mkLit 0) (Var n))]) $
          Var n `mkApps` [Var d `mkApps` [Var d `mkApps` [mkLit 0]]]

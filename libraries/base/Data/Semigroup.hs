@@ -117,9 +117,6 @@ import           Data.Bifunctor
 import           Data.Bitraversable
 import           Data.Coerce
 import           Data.Data
-import           Data.Monoid         (All (..), Any (..), Dual (..), Endo (..),
-                                      Product (..), Sum (..))
--- import qualified Data.Monoid         as Monoid
 import           GHC.Generics
 
 -- | A generalization of 'Data.List.cycle' to an arbitrary 'Semigroup'.
@@ -128,6 +125,21 @@ cycle1 :: Semigroup m => m -> m
 cycle1 xs = xs' where xs' = xs <> xs'
 
 -- | This lets you use a difference list of a 'Semigroup' as a 'Monoid'.
+--
+-- === __Example:__
+-- >>> let hello = diff "Hello, "
+-- >>> appEndo hello "World!"
+-- "Hello, World!"
+-- >>> appEndo (hello <> mempty) "World!"
+-- "Hello, World!"
+-- >>> appEndo (mempty <> hello) "World!"
+-- "Hello, World!"
+-- >>> let world = diff "World"
+-- >>> let excl = diff "!"
+-- >>> appEndo (hello <> (world <> excl)) mempty
+-- "Hello, World!"
+-- >>> appEndo ((hello <> world) <> excl) mempty
+-- "Hello, World!"
 diff :: Semigroup m => m -> Endo m
 diff = Endo . (<>)
 
@@ -274,7 +286,15 @@ instance Num a => Num (Max a) where
 
 -- | 'Arg' isn't itself a 'Semigroup' in its own right, but it can be
 -- placed inside 'Min' and 'Max' to compute an arg min or arg max.
-data Arg a b = Arg a b deriving
+--
+-- >>> minimum [ Arg (x * x) x | x <- [-10 .. 10] ]
+-- Arg 0 0
+data Arg a b = Arg
+  a
+  -- ^ The argument used for comparisons in 'Eq' and 'Ord'.
+  b
+  -- ^ The "value" exposed via the 'Functor', 'Foldable' etc. instances.
+  deriving
   ( Show     -- ^ @since 4.9.0.0
   , Read     -- ^ @since 4.9.0.0
   , Data     -- ^ @since 4.9.0.0
@@ -282,7 +302,14 @@ data Arg a b = Arg a b deriving
   , Generic1 -- ^ @since 4.9.0.0
   )
 
+-- |
+-- >>> Min (Arg 0 ()) <> Min (Arg 1 ())
+-- Min {getMin = Arg 0 ()}
 type ArgMin a b = Min (Arg a b)
+
+-- |
+-- >>> Max (Arg 0 ()) <> Max (Arg 1 ())
+-- Max {getMax = Arg 1 ()}
 type ArgMax a b = Max (Arg a b)
 
 -- | @since 4.9.0.0

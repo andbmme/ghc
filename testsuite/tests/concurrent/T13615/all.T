@@ -1,5 +1,6 @@
 test('T13615',
      [when(fast(), skip),
+      when(unregisterised(), skip),
       req_smp, # needs -N support
       only_ways(threaded_ways),
       extra_files(['Parallel.hs', 'Memo.hs']),
@@ -8,5 +9,5 @@ test('T13615',
       # reproduction probability is around 75% on my dual-core hyperthreaded
       # laptop.
       extra_run_opts('+RTS -N15 -ki4k')],
-     multimod_compile_and_run,
+     [fragile_for(17269, 'threaded1'), multimod_compile_and_run],
      ['T13615','-rtsopts'])

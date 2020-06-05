@@ -10,14 +10,14 @@ module TH_RichKinds2 where
 
 import qualified Data.Kind as K
 import Data.Char
-import Data.List
+import Data.List (splitAt, span, elemIndex)
 import Language.Haskell.TH
 
 $(return [OpenTypeFamilyD (TypeFamilyHead
-          (mkName "Map") [KindedTV (mkName "f")
+          (mkName "Map") [KindedTV (mkName "f") ()
                           (AppT (AppT ArrowT (VarT (mkName "k1")))
                            (VarT (mkName "k2"))),
-                          KindedTV (mkName "l")
+                          KindedTV (mkName "l") ()
                           (AppT ListT
                            (VarT (mkName "k1")))]
           (KindSig (AppT ListT (VarT (mkName "k2")))) Nothing)])

@@ -41,7 +41,7 @@ static block_rec* free_blocks = NULL;
 typedef LPVOID(WINAPI *VirtualAllocExNumaProc)(HANDLE, LPVOID, SIZE_T, DWORD, DWORD, DWORD);
 
 /* Cache NUMA API call. */
-VirtualAllocExNumaProc VirtualAllocExNuma;
+VirtualAllocExNumaProc _VirtualAllocExNuma;
 
 void
 osMemInit(void)
@@ -52,8 +52,8 @@ osMemInit(void)
     /* Resolve and cache VirtualAllocExNuma. */
     if (osNumaAvailable() && RtsFlags.GcFlags.numa)
     {
-        VirtualAllocExNuma = (VirtualAllocExNumaProc)GetProcAddress(GetModuleHandleW(L"kernel32"), "VirtualAllocExNuma");
-        if (!VirtualAllocExNuma)
+        _VirtualAllocExNuma = (VirtualAllocExNumaProc)(void*)GetProcAddress(GetModuleHandleW(L"kernel32"), "VirtualAllocExNuma");
+        if (!_VirtualAllocExNuma)
         {
             sysErrorBelch(
                 "osBindMBlocksToNode: VirtualAllocExNuma does not exist. How did you get this far?");
@@ -144,8 +144,11 @@ findFreeBlocks(uint32_t n) {
     temp.next=free_blocks; temp.base=0; temp.size=0;
     prev=&temp;
     /* TODO: Don't just take first block, find smallest sufficient block */
-    for( ; it!=0 && it->size<required_size; prev=it, it=it->next ) {}
-    if(it!=0) {
+    for ( ; it; prev=it, it=it->next )
+      {
+        if (!it || it->size < required_size)
+          continue;
+
         if( (((W_)it->base) & MBLOCK_MASK) == 0) { /* MBlock aligned */
             ret = (void*)it->base;
             if(it->size==required_size) {
@@ -155,24 +158,30 @@ findFreeBlocks(uint32_t n) {
                 it->base += required_size;
                 it->size -=required_size;
             }
+            break;
         } else {
             char* need_base;
             block_rec* next;
             int new_size;
             need_base =
                 (char*)(((W_)it->base) & ((W_)~MBLOCK_MASK)) + MBLOCK_SIZE;
+            new_size = need_base - it->base;
+            /* Make sure that after alignment we have enough space.  */
+            W_ total_size = new_size + required_size;
+            if (total_size > it->size)
+              continue;
             next = (block_rec*)stgMallocBytes(
                     sizeof(block_rec)
                     , "getMBlocks: findFreeBlocks: splitting");
-            new_size = need_base - it->base;
             next->base = need_base +required_size;
-            next->size = it->size - (new_size+required_size);
+            next->size = it->size - total_size;
             it->size = new_size;
             next->next = it->next;
             it->next = next;
             ret=(void*)need_base;
+            break;
         }
-    }
+      }
     free_blocks=temp.next;
     return ret;
 }
@@ -560,7 +569,7 @@ void osBindMBlocksToNode(
                On windows also -xb is broken, it does nothing so that can't
                be used to tweak it (see #12577). So for now, just let the OS decide.
             */
-            temp = VirtualAllocExNuma(
+            temp = _VirtualAllocExNuma(
                           GetCurrentProcess(),
                           NULL, // addr? See base memory
                           size,

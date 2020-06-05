@@ -1,13 +1,13 @@
 module Main where
 
-import DynFlags
+import GHC.Driver.Session
 import GHC
 
 import Control.Monad.IO.Class (liftIO)
 import System.Environment
-import HeaderInfo
-import Outputable
-import StringBuffer
+import GHC.Parser.Header
+import GHC.Utils.Outputable
+import GHC.Data.StringBuffer
 
 main :: IO ()
 main = do

@@ -3,7 +3,7 @@
              FlexibleInstances, UndecidableInstances #-}
 -- UndecidableInstances because (L a b) is no smaller than (C a b)
 
--- This one shows up another rather subtle functional-dependecy
+-- This one shows up another rather subtle functional-dependency
 -- case.  The error is:
 --
 --    Could not deduce (C a b') from the context (C a b)
@@ -20,7 +20,7 @@
 -- So, today, this program fails.  It's trivial to fix by adding a fundep for C
 --      class (G a, L a b) => C a b | a -> b
 
--- Note: Sept 08: when fixing Trac #1470, tc138 started working!
+-- Note: Sept 08: when fixing #1470, tc138 started working!
 -- This test is a very strange one (fundeps, undecidable instances),
 -- so I'm just marking it as "should-succeed".  It's not very clear to
 -- me what the "right" answer should be; when we have the type equality

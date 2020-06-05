@@ -1,0 +1,6 @@
+
+T15807.hs:12:12: error:
+    • Expected kind ‘f -> *’, but ‘f’ has kind ‘*’
+    • In the type ‘f a’
+      In the definition of data constructor ‘MkApp’
+      In the data declaration for ‘App’

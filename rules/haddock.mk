@@ -5,8 +5,8 @@
 # This file is part of the GHC build system.
 #
 # To understand how the build system works and how to modify it, see
-#      http://ghc.haskell.org/trac/ghc/wiki/Building/Architecture
-#      http://ghc.haskell.org/trac/ghc/wiki/Building/Modifying
+#      https://gitlab.haskell.org/ghc/ghc/wikis/building/architecture
+#      https://gitlab.haskell.org/ghc/ghc/wikis/building/modifying
 #
 # -----------------------------------------------------------------------------
 
@@ -58,6 +58,8 @@ $$($$($1_PACKAGE)-$$($1_$2_VERSION)_HADDOCK_FILE) : $$$$(haddock_INPLACE) $$$$(g
 ifeq "$$(HSCOLOUR_SRCS)" "YES"
 	"$$(ghc-cabal_INPLACE)" hscolour $1 $2
 endif
+	# N.B. in a source tree from tarball the testsuite/ directory may not exist
+	mkdir -p $$(TOP)/testsuite/tests/perf/haddock
 	"$$(TOP)/$$(INPLACE_BIN)/haddock" \
 		--verbosity=0 \
 		--odir="$1/$2/doc/html/$$($1_PACKAGE)" \
@@ -76,7 +78,7 @@ endif
 		$$($1_$2_HS_SRCS) \
 		$$($1_$2_EXTRA_HADDOCK_SRCS) \
 		$$(EXTRA_HADDOCK_OPTS) \
-		+RTS -t"$1/$2/haddock.t" --machine-readable
+		+RTS -t"$$(TOP)/testsuite/tests/perf/haddock/$$($1_PACKAGE).t" --machine-readable
 
 # --no-tmp-comp-dir above is important: it saves a few minutes in a
 # validate.  This flag lets Haddock use the pre-compiled object files

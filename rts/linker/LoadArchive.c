@@ -47,15 +47,11 @@ static StgBool loadFatArchive(char tmp[static 20], FILE* f, pathchar* path)
 #elif defined(x86_64_HOST_ARCH)
     const uint32_t mycputype = CPU_TYPE_X86_64;
     const uint32_t mycpusubtype = CPU_SUBTYPE_X86_64_ALL;
-#elif defined(powerpc_HOST_ARCH)
-    const uint32_t mycputype = CPU_TYPE_POWERPC;
-    const uint32_t mycpusubtype = CPU_SUBTYPE_POWERPC_ALL;
-#elif defined(powerpc64_HOST_ARCH)
-    const uint32_t mycputype = CPU_TYPE_POWERPC64;
-    const uint32_t mycpusubtype = CPU_SUBTYPE_POWERPC_ALL;
 #elif defined(aarch64_HOST_ARCH)
     const uint32_t mycputype = CPU_TYPE_ARM64;
     const uint32_t mycpusubtype = CPU_SUBTYPE_ARM64_ALL;
+#elif defined(powerpc_HOST_ARCH) || defined(powerpc64_HOST_ARCH)
+#error No Darwin support on PowerPC
 #else
 #error Unknown Darwin architecture
 #endif
@@ -444,7 +440,7 @@ static HsInt loadArchive_ (pathchar *path)
                     break;
                 }
             }
-            /* If we didn't find a '/', then a space teminates the
+            /* If we didn't find a '/', then a space terminates the
                filename. Note that if we don't find one, then
                thisFileNameSize ends up as 16, and we already have the
                '\0' at the end. */
@@ -463,7 +459,7 @@ static HsInt loadArchive_ (pathchar *path)
         DEBUG_LOG("Found member file `%s'\n", fileName);
 
         /* TODO: Stop relying on file extensions to determine input formats.
-                 Instead try to match file headers. See Trac #13103.  */
+                 Instead try to match file headers. See #13103.  */
         isObject = (thisFileNameSize >= 2 && strncmp(fileName + thisFileNameSize - 2, ".o"  , 2) == 0)
                 || (thisFileNameSize >= 4 && strncmp(fileName + thisFileNameSize - 4, ".p_o", 4) == 0)
                 || (thisFileNameSize >= 4 && strncmp(fileName + thisFileNameSize - 4, ".obj", 4) == 0);
@@ -619,9 +615,6 @@ fail:
         stgFree(gnuFileIndex);
 #endif
     }
-
-    if (RTS_LINKER_USE_MMAP)
-        m32_allocator_flush();
 
     DEBUG_LOG("done\n");
     return retcode;

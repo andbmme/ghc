@@ -1,4 +1,5 @@
 {-# OPTIONS_GHC -fno-warn-warnings-deprecations #-}
+{-# OPTIONS_GHC -Wno-incomplete-uni-patterns    #-}
 
 module Main (main) where
 
@@ -14,16 +15,19 @@ import Distribution.Simple.LocalBuildInfo
 import Distribution.Simple.GHC
 import Distribution.Simple.Program
 import Distribution.Simple.Program.HcPkg
-import Distribution.Simple.Setup (ConfigFlags(configStripLibs), fromFlag, toFlag)
+import Distribution.Simple.Setup (ConfigFlags(configStripLibs), fromFlagOrDefault, toFlag)
 import Distribution.Simple.Utils (defaultPackageDesc, findHookedPackageDesc, writeFileAtomic,
                                   toUTF8LBS)
 import Distribution.Simple.Build (writeAutogenFiles)
 import Distribution.Simple.Register
+import qualified Distribution.Compat.Graph as Graph
 import Distribution.Text
 import Distribution.Types.MungedPackageId
+import Distribution.Types.LocalBuildInfo
 import Distribution.Verbosity
 import qualified Distribution.InstalledPackageInfo as Installed
 import qualified Distribution.Simple.PackageIndex as PackageIndex
+import Distribution.Utils.ShortText (fromShortText)
 
 import Control.Exception (bracket)
 import Control.Monad
@@ -166,7 +170,7 @@ doCopy directory distDir
                                withPrograms = progs',
                                installDirTemplates = idts,
                                configFlags = cfg,
-                               stripLibs = fromFlag (configStripLibs cfg),
+                               stripLibs = fromFlagOrDefault False (configStripLibs cfg),
                                withSharedLib = withSharedLibs
                            }
 
@@ -251,6 +255,18 @@ updateInstallDirTemplates relocatableBuild myPrefix myLibdir myDocdir idts
           htmldir   = toPathTemplate "$docdir"
       }
 
+externalPackageDeps :: LocalBuildInfo -> [(UnitId, MungedPackageId)]
+externalPackageDeps lbi =
+    -- TODO:  what about non-buildable components?
+    nub [ (ipkgid, pkgid)
+        | clbi            <- Graph.toList (componentGraph lbi)
+        , (ipkgid, pkgid) <- componentPackageDeps clbi
+        , not (internal ipkgid) ]
+  where
+    -- True if this dependency is an internal one (depends on the library
+    -- defined in the same package).
+    internal ipkgid = any ((==ipkgid) . componentUnitId) (Graph.toList (componentGraph lbi))
+
 generate :: FilePath -> FilePath -> [String] -> IO ()
 generate directory distdir config_args
  = withCurrentDirectory directory
@@ -274,8 +290,8 @@ generate directory distdir config_args
               -- cabal 2.2+ will expect it, but fallback to the old default
               -- location if we don't find any.  This is the case of the
               -- bindist, which doesn't ship the $dist/build folder.
-              maybe_infoFile <- findHookedPackageDesc (cwd </> distdir </> "build")
-                                <|> defaultHookedPackageDesc
+              maybe_infoFile <- findHookedPackageDesc verbosity (cwd </> distdir </> "build")
+                                <|> fmap Just (defaultPackageDesc verbosity)
               case maybe_infoFile of
                   Nothing       -> return emptyHookedBuildInfo
                   Just infoFile -> readHookedBuildInfo verbosity infoFile
@@ -307,8 +323,9 @@ generate directory distdir config_args
 
       let
           comp = compiler lbi
-          libBiModules lib = (libBuildInfo lib, libModules lib)
+          libBiModules lib = (libBuildInfo lib, foldMap (allLibModules lib) (componentNameCLBIs lbi $ CLibName defaultLibName))
           exeBiModules exe = (buildInfo exe, ModuleName.main : exeModules exe)
+          biModuless :: [(BuildInfo, [ModuleName.ModuleName])]
           biModuless = (map libBiModules . maybeToList $ library pd)
                     ++ (map exeBiModules $ executables pd)
           buildableBiModuless = filter isBuildable biModuless
@@ -370,13 +387,30 @@ generate directory distdir config_args
           fixupRtsLibName x = x
           transitiveDepNames = map (display . packageName) transitive_dep_ids
 
-          libraryDirs = forDeps Installed.libraryDirs
+          -- Note [Msys2 path translation bug].
+          -- Msys2 has an annoying bug in their path conversion code.
+          -- Officially anything starting with a drive letter should not be
+          -- subjected to path translations, however it seems to only consider
+          -- E:\\ and E:// to be Windows paths.  Mixed mode paths such as E:/
+          -- that are produced here get corrupted.
+          --
+          -- Tamar@Rage /t/translate> ./a.exe -optc-I"E://ghc-dev/msys64/"
+          -- path: -optc-IE://ghc-dev/msys64/
+          -- Tamar@Rage /t/translate> ./a.exe -optc-I"E:ghc-dev/msys64/"
+          -- path: -optc-IE:ghc-dev/msys64/
+          -- Tamar@Rage /t/translate> ./a.exe -optc-I"E:\ghc-dev/msys64/"
+          -- path: -optc-IE:\ghc-dev/msys64/
+          --
+          -- As such, let's just normalize the filepaths which is a good thing
+          -- to do anyway.
+          libraryDirs = map normalise $ forDeps Installed.libraryDirs
           -- The mkLibraryRelDir function is a bit of a hack.
           -- Ideally it should be handled in the makefiles instead.
-          mkLibraryRelDir "rts"   = "rts/dist/build"
-          mkLibraryRelDir "ghc"   = "compiler/stage2/build"
-          mkLibraryRelDir "Cabal" = "libraries/Cabal/Cabal/dist-install/build"
-          mkLibraryRelDir l       = "libraries/" ++ l ++ "/dist-install/build"
+          mkLibraryRelDir "rts"        = "rts/dist/build"
+          mkLibraryRelDir "ghc"        = "compiler/stage2/build"
+          mkLibraryRelDir "Cabal"      = "libraries/Cabal/Cabal/dist-install/build"
+          mkLibraryRelDir "containers" = "libraries/containers/containers/dist-install/build"
+          mkLibraryRelDir l            = "libraries/" ++ l ++ "/dist-install/build"
           libraryRelDirs = map mkLibraryRelDir transitiveDepNames
 
           -- this is a hack to accommodate Cabal 2.2+ more hygenic
@@ -386,7 +420,8 @@ generate directory distdir config_args
           injectDistInstall x | takeBaseName x == "include" = [x, takeDirectory x ++ "/dist-install/build/" ++ takeBaseName x]
           injectDistInstall x = [x]
 
-      wrappedIncludeDirs <- wrap $ concatMap injectDistInstall $ forDeps Installed.includeDirs
+      -- See Note [Msys2 path translation bug].
+      wrappedIncludeDirs <- wrap $ map normalise $ concatMap injectDistInstall $ forDeps Installed.includeDirs
 
       let variablePrefix = directory ++ '_':distdir
           mods      = map display modules
@@ -397,7 +432,7 @@ generate directory distdir config_args
                 variablePrefix ++ "_COMPONENT_ID = " ++ localCompatPackageKey lbi,
                 variablePrefix ++ "_MODULES = " ++ unwords mods,
                 variablePrefix ++ "_HIDDEN_MODULES = " ++ unwords otherMods,
-                variablePrefix ++ "_SYNOPSIS =" ++ (unwords $ lines $ synopsis pd),
+                variablePrefix ++ "_SYNOPSIS =" ++ (unwords $ lines $ fromShortText $ synopsis pd),
                 variablePrefix ++ "_HS_SRC_DIRS = " ++ unwords (hsSourceDirs bi),
                 variablePrefix ++ "_DEPS = " ++ unwords deps,
                 variablePrefix ++ "_DEP_IPIDS = " ++ unwords dep_ipids,
@@ -441,9 +476,9 @@ generate directory distdir config_args
                 ]
       writeFile (distdir ++ "/package-data.mk") $ unlines xs
 
-      writeFileUtf8 (distdir ++ "/haddock-prologue.txt") $
-          if null (description pd) then synopsis pd
-                                   else description pd
+      writeFileUtf8 (distdir ++ "/haddock-prologue.txt") $ fromShortText $
+          if null (fromShortText $ description pd) then synopsis pd
+                                                   else description pd
   where
      escape = foldr (\c xs -> if c == '#' then '\\':'#':xs else c:xs) []
      wrap = mapM wrap1

@@ -5,7 +5,7 @@
  * Capabilities
  *
  * For details on the high-level design, see
- *   http://ghc.haskell.org/trac/ghc/wiki/Commentary/Rts/Scheduler
+ *   https://gitlab.haskell.org/ghc/ghc/wikis/commentary/rts/scheduler
  *
  * A Capability holds all the state an OS thread/task needs to run
  * Haskell code: its STG registers, a pointer to its TSO, a nursery
@@ -23,6 +23,7 @@
 #include "sm/GC.h" // for evac_fn
 #include "Task.h"
 #include "Sparks.h"
+#include "sm/NonMovingMark.h" // for MarkQueue
 
 #include "BeginPrivate.h"
 
@@ -83,6 +84,9 @@ struct Capability_ {
     // unnecessarily moving the data from one cache to another.
     bdescr **mut_lists;
     bdescr **saved_mut_lists; // tmp use during GC
+
+    // The update remembered set for the non-moving collector
+    UpdRemSet upd_rem_set;
 
     // block for allocating pinned objects into
     bdescr *pinned_object_block;
@@ -160,7 +164,9 @@ struct Capability_ {
 } // typedef Capability is defined in RtsAPI.h
   // We never want a Capability to overlap a cache line with anything
   // else, so round it up to a cache line size:
-#ifndef mingw32_HOST_OS
+#if defined(s390x_HOST_ARCH)
+  ATTRIBUTE_ALIGNED(256)
+#elif !defined(mingw32_HOST_OS)
   ATTRIBUTE_ALIGNED(64)
 #endif
   ;
@@ -256,7 +262,8 @@ extern Capability **capabilities;
 typedef enum {
     SYNC_OTHER,
     SYNC_GC_SEQ,
-    SYNC_GC_PAR
+    SYNC_GC_PAR,
+    SYNC_FLUSH_UPD_REM_SET
 } SyncType;
 
 //
@@ -264,7 +271,10 @@ typedef enum {
 //
 typedef struct {
     SyncType type;              // The kind of synchronisation
-    bool *idle;
+    bool *idle;                 // Array of size n_capabilities. idle[i] is true
+                                // if capability i will be idle during this GC
+                                // cycle. Only available when doing GC (when
+                                // type is SYNC_GC_*).
     Task *task;                 // The Task performing the sync
 } PendingSync;
 

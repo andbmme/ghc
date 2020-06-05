@@ -1,14 +1,18 @@
 {-# LANGUAGE RankNTypes, KindSignatures #-}
 {-# OPTIONS_GHC -Werror #-}
 
--- Trac #959
+-- #959
 
 module ShouldFail where
 
-data D (f :: (* -> *) -> * -> *) (af :: * -> *) (ax :: *) =
+import Data.Kind (Type)
+
+data D (f :: (Type -> Type) -> Type -> Type)
+       (af :: Type -> Type)
+       (ax :: Type) =
   D (af (f af ax))
 
-data CList (f :: (* -> *) -> * -> *) (a :: *) =
+data CList (f :: (Type -> Type) -> Type -> Type) (a :: Type) =
   RCons a (CList (D f) a)
 
 type CycleList a = forall f. CList f a

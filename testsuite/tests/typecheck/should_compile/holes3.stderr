@@ -7,7 +7,7 @@ holes3.hs:3:5: error:
     • In the expression: _
       In an equation for ‘f’: f = _
     • Relevant bindings include f :: t (bound at holes3.hs:3:1)
-      Valid hole fits include f :: forall t. t
+      Valid hole fits include f :: forall {t}. t
 
 holes3.hs:6:7: error:
     • Found hole: _gr :: Char
@@ -18,7 +18,7 @@ holes3.hs:6:7: error:
         x :: Int (bound at holes3.hs:6:3)
         g :: Int -> Char (bound at holes3.hs:6:1)
       Valid hole fits include
-        f :: forall t. t
+        f :: forall {t}. t
         maxBound :: forall a. Bounded a => a
         minBound :: forall a. Bounded a => a
 
@@ -31,7 +31,8 @@ holes3.hs:8:5: error:
     • Relevant bindings include h :: [Char] (bound at holes3.hs:8:1)
       Valid hole fits include
         h :: [Char]
-        f :: forall t. t
+        f :: forall {t}. t
+        [] :: forall a. [a]
         mempty :: forall a. Monoid a => a
 
 holes3.hs:11:15: error:
@@ -49,10 +50,14 @@ holes3.hs:11:15: error:
         z :: [a] -> [a]
         g :: Int -> Char
         h :: [Char]
-        f :: forall t. t
+        f :: forall {t}. t
         otherwise :: Bool
         False :: Bool
         True :: Bool
+        LT :: Ordering
+        EQ :: Ordering
+        GT :: Ordering
+        () :: ()
         lines :: String -> [String]
         unlines :: [String] -> String
         unwords :: [String] -> String
@@ -75,9 +80,6 @@ holes3.hs:11:15: error:
         (&&) :: Bool -> Bool -> Bool
         not :: Bool -> Bool
         (||) :: Bool -> Bool -> Bool
-        EQ :: Ordering
-        LT :: Ordering
-        GT :: Ordering
         (++) :: forall a. [a] -> [a] -> [a]
         filter :: forall a. (a -> Bool) -> [a] -> [a]
         fromInteger :: forall a. Num a => Integer -> a
@@ -87,8 +89,11 @@ holes3.hs:11:15: error:
         fromIntegral :: forall a b. (Integral a, Num b) => a -> b
         toInteger :: forall a. Integral a => a -> Integer
         toRational :: forall a. Real a => a -> Rational
+        (:) :: forall a. a -> [a] -> [a]
         Nothing :: forall a. Maybe a
         Just :: forall a. a -> Maybe a
+        [] :: forall a. [a]
+        Solo :: forall a. a -> Solo a
         asTypeOf :: forall a. a -> a -> a
         id :: forall a. a -> a
         until :: forall a. (a -> Bool) -> (a -> a) -> a -> a
@@ -163,12 +168,13 @@ holes3.hs:11:15: error:
         quot :: forall a. Integral a => a -> a -> a
         quotRem :: forall a. Integral a => a -> a -> (a, a)
         rem :: forall a. Integral a => a -> a -> a
-        seq :: forall a b. a -> b -> b
         zip :: forall a b. [a] -> [b] -> [(a, b)]
         fst :: forall a b. (a, b) -> a
         snd :: forall a b. (a, b) -> b
         map :: forall a b. (a -> b) -> [a] -> [b]
         realToFrac :: forall a b. (Real a, Fractional b) => a -> b
+        Left :: forall a b. a -> Either a b
+        Right :: forall a b. b -> Either a b
         maybe :: forall b a. b -> (a -> b) -> Maybe a -> b
         const :: forall a b. a -> b -> a
         scanl :: forall b a. (b -> a -> b) -> b -> [a] -> [b]
@@ -182,8 +188,7 @@ holes3.hs:11:15: error:
                           a -> (b, a)
         round :: forall a b. (RealFrac a, Integral b) => a -> b
         truncate :: forall a b. (RealFrac a, Integral b) => a -> b
-        Right :: forall a b. b -> Either a b
-        Left :: forall a b. a -> Either a b
+        seq :: forall a b. a -> b -> b
         ($) :: forall a b. (a -> b) -> a -> b
         either :: forall a c b. (a -> c) -> (b -> c) -> Either a b -> c
         curry :: forall a b c. ((a, b) -> c) -> a -> b -> c

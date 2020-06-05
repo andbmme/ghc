@@ -217,7 +217,7 @@ $(eval $(call canonicalise,TOP_ABS))
 GS = gs
 CP = cp
 RM = rm -f
-PYTHON = python3
+PYTHON ?= python3
 
 ifeq "$(CHECK_API_ANNOTATIONS)" ""
 CHECK_API_ANNOTATIONS := $(abspath $(TOP)/../inplace/bin/check-api-annotations)
@@ -240,15 +240,17 @@ $(TOP)/mk/ghc-config : $(TOP)/mk/ghc-config.hs
 
 empty=
 space=$(empty) $(empty)
-ghc-config-mk = $(TOP)/mk/ghcconfig$(subst $(space),_,$(subst :,_,$(subst /,_,$(subst \,_,$(TEST_HC))))).mk
+ifeq "$(ghc_config_mk)" ""
+ghc_config_mk = $(TOP)/mk/ghcconfig$(subst $(space),_,$(subst :,_,$(subst /,_,$(subst \,_,$(TEST_HC))))).mk
 
-$(ghc-config-mk) : $(TOP)/mk/ghc-config
+$(ghc_config_mk) : $(TOP)/mk/ghc-config
 	$(TOP)/mk/ghc-config "$(TEST_HC)" >"$@"; if [ $$? != 0 ]; then $(RM) "$@"; exit 1; fi
 # If the ghc-config fails, remove $@, and fail
+endif
 
 # Note: $(CLEANING) is not defined in the testsuite.
 ifeq "$(findstring clean,$(MAKECMDGOALS))" ""
--include $(ghc-config-mk)
+-include $(ghc_config_mk)
 endif
 
 # Note [WayFlags]

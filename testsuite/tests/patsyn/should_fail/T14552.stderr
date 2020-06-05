@@ -1,9 +1,8 @@
 
 T14552.hs:22:9: error:
-    • Universal type variable ‘aa’ has existentially bound kind:
-        aa :: k
-      Existentially-bound variables:
-        k :: *
-        w :: k --> *
-      Probable fix: give the pattern synonym a type signature
+    • Cannot generalise type; skolem ‘k’ would escape its scope
+      if I tried to quantify (aa0 :: k) in this type:
+        forall k (w :: k --> *). Exp a0 (F @k @(*) w aa0)
+      (Indeed, I sometimes struggle even printing this correctly,
+       due to its ill-scoped nature.)
     • In the declaration for pattern synonym ‘FOO’

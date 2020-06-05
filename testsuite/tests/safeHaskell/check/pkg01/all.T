@@ -28,13 +28,14 @@ make_args = 'VANILLA=' + vanilla + ' PROF=' + prof + ' DYN=' + dyn
 # and can be changed correctly
 test('safePkg01',
      [extra_files(['M_SafePkg.hs', 'M_SafePkg2.hs', 'M_SafePkg3.hs', 'M_SafePkg4.hs', 'M_SafePkg5.hs', 'M_SafePkg6.hs', 'M_SafePkg7.hs', 'M_SafePkg8.hs', 'Setup.hs', 'p.cabal']),
-      normalise_errmsg_fun(ignoreLdOutput),
+      normalise_errmsg_fun(ignoreLdOutput, normalise_errmsg),
       normalise_version("array", "integer-gmp", "integer-simple", "bytestring",
-                        "base", "deepseq", "ghc-prim")],
+                        "base", "deepseq", "ghc-prim"),
+      normalise_fun(normalise_errmsg)],
      run_command, ['$MAKE -s --no-print-directory safePkg01 ' + make_args])
 
 # Fail since we enable package trust
-test('ImpSafe01', normal, compile_fail, ['-fpackage-trust -distrust base'])
+test('ImpSafe01', normalise_version('base'), compile_fail, ['-fpackage-trust -distrust base'])
 
 # Succeed since we don't enable package trust
 test('ImpSafe02', normal, compile, ['-distrust base'])
@@ -48,7 +49,7 @@ test('ImpSafe03',
   ], '-fpackage-trust' ])
 
 # Fail same as ImpSafe01 but testing with -XTrustworthy now
-test('ImpSafe04', normal, compile_fail, ['-fpackage-trust -distrust base'])
+test('ImpSafe04', normalise_version('base'), compile_fail, ['-fpackage-trust -distrust base'])
 
 test('ImpSafeOnly01',
      [extra_files(['M_SafePkg.hs', 'M_SafePkg2.hs', 'M_SafePkg3.hs', 'M_SafePkg4.hs', 'M_SafePkg5.hs', 'M_SafePkg6.hs', 'M_SafePkg7.hs', 'M_SafePkg8.hs', 'Setup.hs', 'p.cabal']),

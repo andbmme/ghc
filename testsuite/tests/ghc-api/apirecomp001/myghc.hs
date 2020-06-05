@@ -10,10 +10,10 @@
 module Main where
 
 import GHC
-import DynFlags
-import MonadUtils ( MonadIO(..) )
-import BasicTypes ( failed )
-import Bag        ( bagToList )
+import GHC.Driver.Session
+import GHC.Utils.Monad ( MonadIO(..) )
+import GHC.Types.Basic ( failed )
+import GHC.Data.Bag        ( bagToList )
 import System.Environment
 import Control.Monad
 import System.IO

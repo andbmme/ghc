@@ -1,7 +1,91 @@
 # Changelog for [`base` package](http://hackage.haskell.org/package/base)
 
-## 4.12.0.0 *TBA*
-  * Bundled with GHC *TBA*
+## 4.15.0.0 *TBA*
+
+  * `openFile` now calls the `open` system call with an `interruptible` FFI
+    call, ensuring that the call can be interrupted with `SIGINT` on POSIX
+    systems.
+
+  * Add `hGetContents'`, `getContents'`, and `readFile'` in `System.IO`:
+    Strict IO variants of `hGetContents`, `getContents`, and `readFile`.
+
+  * Add `singleton` function for `Data.List.NonEmpty`.
+
+  * The planned deprecation of `Data.Monoid.First` and `Data.Monoid.Last`
+    is scrapped due to difficulties with the suggested migration path.
+
+  * Add `Generic` instances to `Fingerprint`, `GiveGCStats`, `GCFlags`,
+    `ConcFlags`, `DebugFlags`, `CCFlags`, `DoHeapProfile`, `ProfFlags`,
+    `DoTrace`, `TraceFlags`, `TickyFlags`, `ParFlags`, `RTSFlags`, `RTSStats`,
+    `GCStats`, `ByteOrder`, `GeneralCategory`, `SrcLoc`
+    
+  * Add rules `unpackUtf8`, `unpack-listUtf8` and `unpack-appendUtf8` to `GHC.Base`.
+    They correspond to their ascii versions and hopefully make it easier
+    for libraries to handle utf8 encoded strings efficiently.
+
+  * An issue with list fusion and `elem` was fixed. `elem` applied to known
+    small lists will now compile to a simple case statement more often.
+   
+## 4.14.0.0 *TBA*
+  * Bundled with GHC 8.10.1
+
+  * Add a `TestEquality` instance for the `Compose` newtype.
+
+  * `Data.Ord.Down` now has a field name, `getDown`
+
+  * Add `Bits`, `Bounded`, `Enum`, `FiniteBits`, `Floating`, `Fractional`,
+    `Integral`, `Ix`, `Real`, `RealFrac`, `RealFloat` and `Storable` instances
+    to `Data.Ord.Down`.
+
+  * Fix the `integer-gmp` variant of `isValidNatural`: Previously it would fail
+    to detect values `<= maxBound::Word` that were incorrectly encoded using
+    the `NatJ#` constructor.
+
+  * The type of `coerce` has been generalized. It is now runtime-representation
+    polymorphic:
+    `forall {r :: RuntimeRep} (a :: TYPE r) (b :: TYPE r). Coercible a b => a -> b`.
+    The type argument `r` is marked as `Inferred` to prevent it from
+    interfering with visible type application.
+
+  * Make `Fixed` and `HasResolution` poly-kinded.
+
+  * Add `HasResolution` instances for `Nat`s.
+
+  * Add `Functor`, `Applicative`, `Monad`, `Alternative`, `MonadPlus`,
+    `Generic` and `Generic1` instances to `Kleisli`
+
+  * `openTempFile` is now fully atomic and thread-safe on Windows.
+
+  * Add `isResourceVanishedError`, `resourceVanishedErrorType`, and
+    `isResourceVanishedErrorType` to `System.IO.Error`.
+
+  * Add newtypes for `CSocklen` (`socklen_t`) and `CNfds` (`nfds_t`) to
+    `System.Posix.Types`.
+
+  * Add `Functor`, `Applicative` and `Monad` instances to `(,,) a b`
+    and `(,,,) a b c`.
+
+  * Add `resizeSmallMutableArray#` to `GHC.Exts`.
+
+  * Add a `Data` instance to `WrappedArrow`, `WrappedMonad`, and `ZipList`.
+
+  * Add `IsList` instance for `ZipList`.
+
+## 4.13.0.0 *July 2019*
+  * Bundled with GHC 8.8.1
+
+  * The final phase of the `MonadFail` proposal has been implemented:
+
+    * The `fail` method of `Monad` has been removed in favor of the method of
+      the same name in the `MonadFail` class.
+
+    * `MonadFail(fail)` is now re-exported from the `Prelude` and
+      `Control.Monad` modules.
+
+  * Fix `Show` instance of `Data.Fixed`: Negative numbers are now parenthesized
+    according to their surrounding context. I.e. `Data.Fixed.show` produces
+    syntactically correct Haskell for expressions like `Just (-1 :: Fixed E2)`.
+    (#16031)
 
   * Support the characters from recent versions of Unicode (up to v. 12) in
     literals (#5518).
@@ -10,8 +94,16 @@
     a representational one. There is really no reason to care about the
     type of the underlying object.
 
-## 4.12.0.0 *TBA*
-  * Bundled with GHC *TBA*
+  * Add `foldMap'`, a strict version of `foldMap`, to `Foldable`.
+
+  * The `shiftL` and `shiftR` methods in the `Bits` instances of `Int`, `IntN`,
+    `Word`, and `WordN` now throw an overflow exception for negative shift
+    values (instead of being undefined behaviour).
+
+  * `scanr` no longer crashes when passed a fusable, infinite list. (#16943)
+
+## 4.12.0.0 *21 September 2018*
+  * Bundled with GHC 8.6.1
 
   * The STM invariant-checking mechanism (`always` and `alwaysSucceeds`), which
     was deprecated in GHC 8.4, has been removed (as proposed in
@@ -52,13 +144,13 @@
     `Read1`, `Show1`, `Generic`, `Generic1`. (#15098)
 
 
-## 4.11.1.0 *TBA*
+## 4.11.1.0 *19 April 2018*
   * Bundled with GHC 8.4.2
 
   * Add the `readFieldHash` function to `GHC.Read` which behaves like
     `readField`, but for a field that ends with a `#` symbol (#14918).
 
-## 4.11.0.0 *TBA*
+## 4.11.0.0 *8 March 2018*
   * Bundled with GHC 8.4.1
 
   * `System.IO.openTempFile` is now thread-safe on Windows.
@@ -226,7 +318,7 @@
     in constant space when applied to lists. (#10830)
 
   * `mkFunTy`, `mkAppTy`, and `mkTyConApp` from `Data.Typeable` no longer exist.
-    This functionality is superceded by the interfaces provided by
+    This functionality is superseded by the interfaces provided by
     `Type.Reflection`.
 
   * `mkTyCon3` is no longer exported by `Data.Typeable`. This function is

@@ -736,7 +736,7 @@ import GHC.Ptr     ( Ptr )
 import GHC.Types
 
 -- Needed for instances
-import GHC.Arr     ( Ix )
+import GHC.Ix      ( Ix )
 import GHC.Base    ( Alternative(..), Applicative(..), Functor(..)
                    , Monad(..), MonadPlus(..), NonEmpty(..), String, coerce
                    , Semigroup(..), Monoid(..) )
@@ -744,10 +744,13 @@ import GHC.Classes ( Eq(..), Ord(..) )
 import GHC.Enum    ( Bounded, Enum )
 import GHC.Read    ( Read(..) )
 import GHC.Show    ( Show(..), showString )
+import GHC.Stack.Types ( SrcLoc(..) )
+import GHC.Unicode ( GeneralCategory(..) )
+import GHC.Fingerprint.Type ( Fingerprint(..) )
 
 -- Needed for metadata
 import Data.Proxy   ( Proxy(..) )
-import GHC.TypeLits ( Nat, Symbol, KnownSymbol, KnownNat, symbolVal, natVal )
+import GHC.TypeLits ( KnownSymbol, KnownNat, symbolVal, natVal )
 
 --------------------------------------------------------------------------------
 -- Representation types
@@ -1437,6 +1440,14 @@ deriving instance Generic ((,,,,,,) a b c d e f g)
 -- | @since 4.12.0.0
 deriving instance Generic (Down a)
 
+-- | @since 4.15.0.0
+deriving instance Generic SrcLoc
+
+-- | @since 4.15.0.0
+deriving instance Generic GeneralCategory
+
+-- | @since 4.15.0.0
+deriving instance Generic Fingerprint
 
 -- | @since 4.6.0.0
 deriving instance Generic1 []

@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE RecordWildCards   #-}
 
@@ -47,6 +48,7 @@ import Foreign.C
 
 import GHC.Base
 import GHC.Enum
+import GHC.Generics (Generic)
 import GHC.IO
 import GHC.Real
 import GHC.Show
@@ -67,6 +69,7 @@ data GiveGCStats
     | SummaryGCStats
     | VerboseGCStats
     deriving ( Show -- ^ @since 4.8.0.0
+             , Generic -- ^ @since 4.15.0.0
              )
 
 -- | @since 4.8.0.0
@@ -117,6 +120,7 @@ data GCFlags = GCFlags
     , numa                  :: Bool
     , numaMask              :: Word
     } deriving ( Show -- ^ @since 4.8.0.0
+               , Generic -- ^ @since 4.15.0.0
                )
 
 -- | Parameters concerning context switching
@@ -126,6 +130,7 @@ data ConcFlags = ConcFlags
     { ctxtSwitchTime  :: RtsTime
     , ctxtSwitchTicks :: Int
     } deriving ( Show -- ^ @since 4.8.0.0
+               , Generic -- ^ @since 4.15.0.0
                )
 
 -- | Miscellaneous parameters
@@ -138,10 +143,13 @@ data MiscFlags = MiscFlags
     , generateCrashDumpFile :: Bool
     , generateStackTrace    :: Bool
     , machineReadable       :: Bool
+    , disableDelayedOsMemoryReturn :: Bool
     , internalCounters      :: Bool
+    , linkerAlwaysPic       :: Bool
     , linkerMemBase         :: Word
       -- ^ address to ask the OS for memory for the linker, 0 ==> off
     } deriving ( Show -- ^ @since 4.8.0.0
+               , Generic -- ^ @since 4.15.0.0
                )
 
 -- | Flags to control debugging output & extra checking in various
@@ -149,22 +157,24 @@ data MiscFlags = MiscFlags
 --
 -- @since 4.8.0.0
 data DebugFlags = DebugFlags
-    { scheduler   :: Bool -- ^ @s@
-    , interpreter :: Bool -- ^ @i@
-    , weak        :: Bool -- ^ @w@
-    , gccafs      :: Bool -- ^ @G@
-    , gc          :: Bool -- ^ @g@
-    , block_alloc :: Bool -- ^ @b@
-    , sanity      :: Bool -- ^ @S@
-    , stable      :: Bool -- ^ @t@
-    , prof        :: Bool -- ^ @p@
-    , linker      :: Bool -- ^ @l@ the object linker
-    , apply       :: Bool -- ^ @a@
-    , stm         :: Bool -- ^ @m@
-    , squeeze     :: Bool -- ^ @z@ stack squeezing & lazy blackholing
-    , hpc         :: Bool -- ^ @c@ coverage
-    , sparks      :: Bool -- ^ @r@
+    { scheduler      :: Bool -- ^ @s@
+    , interpreter    :: Bool -- ^ @i@
+    , weak           :: Bool -- ^ @w@
+    , gccafs         :: Bool -- ^ @G@
+    , gc             :: Bool -- ^ @g@
+    , nonmoving_gc   :: Bool -- ^ @n@
+    , block_alloc    :: Bool -- ^ @b@
+    , sanity         :: Bool -- ^ @S@
+    , stable         :: Bool -- ^ @t@
+    , prof           :: Bool -- ^ @p@
+    , linker         :: Bool -- ^ @l@ the object linker
+    , apply          :: Bool -- ^ @a@
+    , stm            :: Bool -- ^ @m@
+    , squeeze        :: Bool -- ^ @z@ stack squeezing & lazy blackholing
+    , hpc            :: Bool -- ^ @c@ coverage
+    , sparks         :: Bool -- ^ @r@
     } deriving ( Show -- ^ @since 4.8.0.0
+               , Generic -- ^ @since 4.15.0.0
                )
 
 -- | Should the RTS produce a cost-center summary?
@@ -177,6 +187,7 @@ data DoCostCentres
     | CostCentresAll
     | CostCentresJSON
     deriving ( Show -- ^ @since 4.8.0.0
+             , Generic -- ^ @since 4.15.0.0
              )
 
 -- | @since 4.8.0.0
@@ -202,6 +213,7 @@ data CCFlags = CCFlags
     , profilerTicks :: Int
     , msecsPerTick  :: Int
     } deriving ( Show -- ^ @since 4.8.0.0
+               , Generic -- ^ @since 4.15.0.0
                )
 
 -- | What sort of heap profile are we collecting?
@@ -217,6 +229,7 @@ data DoHeapProfile
     | HeapByLDV
     | HeapByClosureType
     deriving ( Show -- ^ @since 4.8.0.0
+             , Generic -- ^ @since 4.15.0.0
              )
 
 -- | @since 4.8.0.0
@@ -259,6 +272,7 @@ data ProfFlags = ProfFlags
     , retainerSelector         :: Maybe String
     , bioSelector              :: Maybe String
     } deriving ( Show -- ^ @since 4.8.0.0
+               , Generic -- ^ @since 4.15.0.0
                )
 
 -- | Is event tracing enabled?
@@ -269,6 +283,7 @@ data DoTrace
     | TraceEventLog  -- ^ send tracing events to the event log
     | TraceStderr    -- ^ send tracing events to @stderr@
     deriving ( Show -- ^ @since 4.8.0.0
+             , Generic -- ^ @since 4.15.0.0
              )
 
 -- | @since 4.8.0.0
@@ -290,10 +305,13 @@ data TraceFlags = TraceFlags
     , timestamp      :: Bool -- ^ show timestamp in stderr output
     , traceScheduler :: Bool -- ^ trace scheduler events
     , traceGc        :: Bool -- ^ trace GC events
+    , traceNonmovingGc
+                     :: Bool -- ^ trace nonmoving GC heap census samples
     , sparksSampled  :: Bool -- ^ trace spark events by a sampled method
     , sparksFull     :: Bool -- ^ trace spark events 100% accurately
     , user           :: Bool -- ^ trace user events (emitted from Haskell code)
     } deriving ( Show -- ^ @since 4.8.0.0
+               , Generic -- ^ @since 4.15.0.0
                )
 
 -- | Parameters pertaining to ticky-ticky profiler
@@ -303,6 +321,7 @@ data TickyFlags = TickyFlags
     { showTickyStats :: Bool
     , tickyFile      :: Maybe FilePath
     } deriving ( Show -- ^ @since 4.8.0.0
+               , Generic -- ^ @since 4.15.0.0
                )
 
 -- | Parameters pertaining to parallelism
@@ -321,6 +340,7 @@ data ParFlags = ParFlags
     , setAffinity :: Bool
     }
     deriving ( Show -- ^ @since 4.8.0.0
+             , Generic -- ^ @since 4.15.0.0
              )
 
 -- | Parameters of the runtime system
@@ -337,6 +357,7 @@ data RTSFlags = RTSFlags
     , tickyFlags      :: TickyFlags
     , parFlags        :: ParFlags
     } deriving ( Show -- ^ @since 4.8.0.0
+               , Generic -- ^ @since 4.15.0.0
                )
 
 foreign import ccall "&RtsFlags" rtsFlagsPtr :: Ptr RTSFlags
@@ -443,7 +464,11 @@ getMiscFlags = do
             <*> (toBool <$>
                   (#{peek MISC_FLAGS, machineReadable} ptr :: IO CBool))
             <*> (toBool <$>
+                  (#{peek MISC_FLAGS, disableDelayedOsMemoryReturn} ptr :: IO CBool))
+            <*> (toBool <$>
                   (#{peek MISC_FLAGS, internalCounters} ptr :: IO CBool))
+            <*> (toBool <$>
+                  (#{peek MISC_FLAGS, linkerAlwaysPic} ptr :: IO CBool))
             <*> #{peek MISC_FLAGS, linkerMemBase} ptr
 
 getDebugFlags :: IO DebugFlags
@@ -459,6 +484,8 @@ getDebugFlags = do
                    (#{peek DEBUG_FLAGS, gccafs} ptr :: IO CBool))
              <*> (toBool <$>
                    (#{peek DEBUG_FLAGS, gc} ptr :: IO CBool))
+             <*> (toBool <$>
+                   (#{peek DEBUG_FLAGS, nonmoving_gc} ptr :: IO CBool))
              <*> (toBool <$>
                    (#{peek DEBUG_FLAGS, block_alloc} ptr :: IO CBool))
              <*> (toBool <$>
@@ -519,6 +546,8 @@ getTraceFlags = do
                    (#{peek TRACE_FLAGS, scheduler} ptr :: IO CBool))
              <*> (toBool <$>
                    (#{peek TRACE_FLAGS, gc} ptr :: IO CBool))
+             <*> (toBool <$>
+                   (#{peek TRACE_FLAGS, nonmoving_gc} ptr :: IO CBool))
              <*> (toBool <$>
                    (#{peek TRACE_FLAGS, sparks_sampled} ptr :: IO CBool))
              <*> (toBool <$>

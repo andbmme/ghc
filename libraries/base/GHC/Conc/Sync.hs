@@ -113,9 +113,11 @@ import GHC.IORef
 import GHC.MVar
 import GHC.Ptr
 import GHC.Real         ( fromIntegral )
-import GHC.Show         ( Show(..), showString )
+import GHC.Show         ( Show(..), showParen, showString )
 import GHC.Stable       ( StablePtr(..) )
 import GHC.Weak
+
+import Unsafe.Coerce    ( unsafeCoerce# )
 
 infixr 0 `par`, `pseq`
 
@@ -145,7 +147,7 @@ This misfeature will hopefully be corrected at a later date.
 
 -- | @since 4.2.0.0
 instance Show ThreadId where
-   showsPrec d t =
+   showsPrec d t = showParen (d >= 11) $
         showString "ThreadId " .
         showsPrec d (getThreadId (id2TSO t))
 
@@ -154,26 +156,21 @@ foreign import ccall unsafe "rts_getThreadId" getThreadId :: ThreadId# -> CInt
 id2TSO :: ThreadId -> ThreadId#
 id2TSO (ThreadId t) = t
 
+foreign import ccall unsafe "eq_thread" eq_thread :: ThreadId# -> ThreadId# -> CBool
+
 foreign import ccall unsafe "cmp_thread" cmp_thread :: ThreadId# -> ThreadId# -> CInt
 -- Returns -1, 0, 1
 
-cmpThread :: ThreadId -> ThreadId -> Ordering
-cmpThread t1 t2 =
-   case cmp_thread (id2TSO t1) (id2TSO t2) of
-      -1 -> LT
-      0  -> EQ
-      _  -> GT -- must be 1
-
 -- | @since 4.2.0.0
 instance Eq ThreadId where
-   t1 == t2 =
-      case t1 `cmpThread` t2 of
-         EQ -> True
-         _  -> False
+  ThreadId t1 == ThreadId t2 = eq_thread t1 t2 /= 0
 
 -- | @since 4.2.0.0
 instance Ord ThreadId where
-   compare = cmpThread
+  compare (ThreadId t1) (ThreadId t2) = case cmp_thread t1 t2 of
+    -1 -> LT
+    0  -> EQ
+    _  -> GT
 
 -- | Every thread has an allocation counter that tracks how much
 -- memory has been allocated by the thread.  The counter is
@@ -367,7 +364,7 @@ to avoid contention with other processes in the machine.
 -}
 setNumCapabilities :: Int -> IO ()
 setNumCapabilities i
-  | i <= 0    = fail $ "setNumCapabilities: Capability count ("++show i++") must be positive"
+  | i <= 0    = failIO $ "setNumCapabilities: Capability count ("++show i++") must be positive"
   | otherwise = c_setNumCapabilities (fromIntegral i)
 
 foreign import ccall safe "setNumCapabilities"
@@ -626,6 +623,9 @@ data PrimMVar
 newStablePtrPrimMVar :: MVar () -> IO (StablePtr PrimMVar)
 newStablePtrPrimMVar (MVar m) = IO $ \s0 ->
   case makeStablePtr# (unsafeCoerce# m :: PrimMVar) s0 of
+    -- Coerce unlifted  m :: MVar# RealWorld ()
+    --     to lifted    PrimMVar
+    -- apparently because mkStablePtr is not levity-polymorphic
     (# s1, sp #) -> (# s1, StablePtr sp #)
 
 -----------------------------------------------------------------------------
@@ -752,7 +752,12 @@ orElse (STM m) e = STM $ \s -> catchRetry# m (unSTM e) s
 -- | A variant of 'throw' that can only be used within the 'STM' monad.
 --
 -- Throwing an exception in @STM@ aborts the transaction and propagates the
--- exception.
+-- exception. If the exception is caught via 'catchSTM', only the changes
+-- enclosed by the catch are rolled back; changes made outside of 'catchSTM'
+-- persist.
+--
+-- If the exception is not caught inside of the 'STM', it is re-thrown by
+-- 'atomically', and the entire 'STM' is rolled back.
 --
 -- Although 'throwSTM' has a type that is an instance of the type of 'throw', the
 -- two functions are subtly different:
@@ -770,7 +775,12 @@ orElse (STM m) e = STM $ \s -> catchRetry# m (unSTM e) s
 throwSTM :: Exception e => e -> STM a
 throwSTM e = STM $ raiseIO# (toException e)
 
--- |Exception handling within STM actions.
+-- | Exception handling within STM actions.
+--
+-- @'catchSTM' m f@ catches any exception thrown by @m@ using 'throwSTM',
+-- using the function @f@ to handle the exception. If an exception is
+-- thrown, any changes made by @m@ are rolled back, but changes prior to
+-- @m@ persist.
 catchSTM :: Exception e => STM a -> (e -> STM a) -> STM a
 catchSTM (STM m) handler = STM $ catchSTM# m handler'
     where

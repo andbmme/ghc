@@ -131,7 +131,9 @@ addFilePathToIOError fun fp ioe
 --  * 'System.IO.Error.isAlreadyInUseError' if the file is already open and
 --    cannot be reopened;
 --
---  * 'System.IO.Error.isDoesNotExistError' if the file does not exist; or
+--  * 'System.IO.Error.isDoesNotExistError' if the file does not exist or
+--    (on POSIX systems) is a FIFO without a reader and 'WriteMode' was
+--    requested; or
 --
 --  * 'System.IO.Error.isPermissionError' if the user does not have permission
 --     to open the file.
@@ -148,6 +150,11 @@ openFile fp im =
 -- This can be useful for opening a FIFO for writing: if we open in
 -- non-blocking mode then the open will fail if there are no readers,
 -- whereas a blocking open will block until a reader appear.
+-- 
+-- Note: when blocking happens, an OS thread becomes tied up with the
+-- processing, so the program must have at least another OS thread if
+-- it wants to unblock itself. By corollary, a non-threaded runtime
+-- will need a process-external trigger in order to become unblocked.
 --
 -- @since 4.4.0.0
 openFileBlocking :: FilePath -> IOMode -> IO Handle

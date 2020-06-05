@@ -3,16 +3,16 @@ module Simple.SourcePlugin where
 import Control.Monad.IO.Class
 import Data.List (intercalate)
 import Data.Maybe (isJust)
-import Plugins
-import HscTypes
-import TcRnTypes
-import HsExtension
-import Avail
-import HsExpr
-import Outputable
-import HsImpExp
-import HsDecls
-import HsDoc
+import GHC.Driver.Plugins
+import GHC.Driver.Types
+import GHC.Tc.Types
+import GHC.Hs.Extension
+import GHC.Types.Avail
+import GHC.Hs.Expr
+import GHC.Utils.Outputable
+import GHC.Hs.ImpExp
+import GHC.Hs.Decls
+import GHC.Hs.Doc
 
 plugin :: Plugin
 plugin = defaultPlugin { parsedResultAction = parsedPlugin

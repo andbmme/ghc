@@ -26,10 +26,7 @@ import Control.Monad (MonadPlus(..))
 import Control.Monad.Fix (MonadFix(..))
 import Control.Monad.Zip (MonadZip(mzipWith))
 import Data.Data (Data)
-import Data.Foldable (Foldable(foldMap))
 import Data.Functor.Classes
-import Data.Monoid (mappend)
-import Data.Traversable (Traversable(traverse))
 import GHC.Generics (Generic, Generic1)
 import Text.Read (Read(..), readListDefault, readListPrecDefault)
 
@@ -84,6 +81,7 @@ instance (Show1 f, Show1 g, Show a) => Show (Product f g a) where
 -- | @since 4.9.0.0
 instance (Functor f, Functor g) => Functor (Product f g) where
     fmap f (Pair x y) = Pair (fmap f x) (fmap f y)
+    a <$ (Pair x y) = Pair (a <$ x) (a <$ y)
 
 -- | @since 4.9.0.0
 instance (Foldable f, Foldable g) => Foldable (Product f g) where

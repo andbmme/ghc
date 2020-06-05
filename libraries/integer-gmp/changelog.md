@@ -1,6 +1,12 @@
 # Changelog for [`integer-gmp` package](http://hackage.haskell.org/package/integer-gmp)
 
-## 1.0.2.0 *TBA*
+## 1.0.3.0 *January 2019*
+
+  * Bundled with GHC 8.10.1
+
+  * Documentation changes
+
+## 1.0.2.0 *April 2018*
 
   * Bundled with GHC 8.4.2
 
@@ -32,7 +38,7 @@
   * Bundled with GHC 7.10.1
 
   * Complete rewrite of `integer-gmp`. For more details, see
-    https://ghc.haskell.org/trac/ghc/wiki/Design/IntegerGmp2
+    https://gitlab.haskell.org/ghc/ghc/wikis/design/integer-gmp2
 
 ## 0.5.1.0  *Feb 2014*
 
@@ -40,7 +46,7 @@
 
   * Improved Haddock documentation
 
-  * New [PrimBool](https://ghc.haskell.org/trac/ghc/wiki/PrimBool)
+  * New [PrimBool](https://gitlab.haskell.org/ghc/ghc/wikis/prim-bool)
     versions of comparison predicates in `GHC.Integer`:
 
         eqInteger# :: Integer -> Integer -> Int#
@@ -54,7 +60,7 @@
 
   * Reduce short-lived heap allocation and try to demote `J#` back
     to `S#` more aggressively.  See also
-    [#8647](https://ghc.haskell.org/trac/ghc/ticket/8647)
+    [#8647](https://gitlab.haskell.org/ghc/ghc/issues/8647)
     for more details.
 
   * New GMP-specific binary (de)serialization primitives added to

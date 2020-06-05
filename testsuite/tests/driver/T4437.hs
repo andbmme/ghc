@@ -2,13 +2,13 @@
 -- sync with Cabal's own extension list.
 --
 -- If you have ended up here due to a test failure, please see
--- Note [Adding a language extension] in compiler/main/DynFlags.hs.
+-- Note [Adding a language extension] in compiler/GHC/Driver/Session.hs.
 
 module Main (main) where
 
 import Control.Monad
-import Data.List
-import DynFlags
+import Data.List ( (\\) )
+import GHC.Driver.Session
 import Language.Haskell.Extension
 
 main :: IO ()
@@ -34,14 +34,13 @@ check title expected got
          showProblems "Unexpected flags" unexpected
          showProblems "Missing flags" missing
 
--- See Note [Adding a language extension] in compiler/main/DynFlags.hs.
+-- See Note [Adding a language extension] in compiler/GHC/Driver/Session.hs.
 expectedGhcOnlyExtensions :: [String]
-expectedGhcOnlyExtensions = ["RelaxedLayout",
-                             "AlternativeLayoutRule",
-                             "AlternativeLayoutRuleTransitional",
-                             "DerivingVia",
-                             "EmptyDataDeriving",
-                             "GeneralisedNewtypeDeriving"]
+expectedGhcOnlyExtensions =
+    [ "RelaxedLayout"
+    , "AlternativeLayoutRule"
+    , "AlternativeLayoutRuleTransitional"
+    ]
 
 expectedCabalOnlyExtensions :: [String]
 expectedCabalOnlyExtensions = ["Generics",

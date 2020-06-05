@@ -53,7 +53,7 @@ module GHC.Integer (
     --
     -- | These operations return @0#@ and @1#@ instead of 'False' and
     -- 'True' respectively.  See
-    -- <https://ghc.haskell.org/trac/ghc/wiki/PrimBool PrimBool wiki-page>
+    -- <https://gitlab.haskell.org/ghc/ghc/wikis/prim-bool PrimBool wiki-page>
     -- for more details
     eqInteger#, neqInteger#, leInteger#, gtInteger#, ltInteger#, geInteger#,
 
@@ -63,6 +63,8 @@ module GHC.Integer (
 
     complementInteger,
     shiftLInteger, shiftRInteger, testBitInteger,
+
+    popCountInteger, bitInteger,
 
     -- * Hashing
     hashInteger,

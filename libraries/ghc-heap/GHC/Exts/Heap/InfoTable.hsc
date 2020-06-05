@@ -38,11 +38,7 @@ peekItbl a0 = do
   ptrs'   <- (#peek struct StgInfoTable_, layout.payload.ptrs) ptr
   nptrs'  <- (#peek struct StgInfoTable_, layout.payload.nptrs) ptr
   tipe'   <- (#peek struct StgInfoTable_, type) ptr
-#if __GLASGOW_HASKELL__ > 804
   srtlen' <- (#peek struct StgInfoTable_, srt) a0
-#else
-  srtlen' <- (#peek struct StgInfoTable_, srt_bitmap) ptr
-#endif
   return StgInfoTable
     { entry  = entry'
     , ptrs   = ptrs'
@@ -59,12 +55,8 @@ pokeItbl a0 itbl = do
 #endif
   (#poke StgInfoTable, layout.payload.ptrs) a0 (ptrs itbl)
   (#poke StgInfoTable, layout.payload.nptrs) a0 (nptrs itbl)
-  (#poke StgInfoTable, type) a0 (fromEnum (tipe itbl))
-#if __GLASGOW_HASKELL__ > 804
+  (#poke StgInfoTable, type) a0 (toHalfWord (fromEnum (tipe itbl)))
   (#poke StgInfoTable, srt) a0 (srtlen itbl)
-#else
-  (#poke StgInfoTable, srt_bitmap) a0 (srtlen itbl)
-#endif
 #if defined(TABLES_NEXT_TO_CODE)
   let code_offset = a0 `plusPtr` (#offset StgInfoTable, code)
   case code itbl of
@@ -72,6 +64,9 @@ pokeItbl a0 itbl = do
     Just (Left xs) -> pokeArray code_offset xs
     Just (Right xs) -> pokeArray code_offset xs
 #endif
+  where
+    toHalfWord :: Int -> HalfWord
+    toHalfWord i = fromIntegral i
 
 -- | Size in bytes of a standard InfoTable
 itblSize :: Int

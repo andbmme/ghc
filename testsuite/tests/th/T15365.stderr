@@ -1,8 +1,10 @@
-T15365.hs:(9,3)-(31,6): Splicing declarations
+T15365.hs:(9,2)-(31,7): Splicing declarations
     [d| (&&&) :: Bool -> Bool -> Bool
         (&&&) = (&&)
         pattern (:!!!) :: Bool
         pattern (:!!!) = True
+        
+        type role (***)
         
         type (|||) = Either
         data (***)
